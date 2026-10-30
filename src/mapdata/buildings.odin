@@ -22,8 +22,8 @@ load_buildings :: proc(path: string) -> (buildings: [dynamic]Building, ok: bool)
 
 load_buildings_inner :: proc(path: string) -> (buildings: [dynamic]Building, ok: bool) {
     data, err := os.read_entire_file(path, context.allocator)
-    if err != nil { return }
     defer delete(data)
+    if err != nil { return }
     lines := strings.split_lines(string(data))
     defer delete(lines)
     if len(lines) == 0 || lines[0] != "HCM_BUILDINGS,1" { return }

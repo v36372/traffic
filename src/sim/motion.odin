@@ -3,9 +3,10 @@ package sim
 import "core:math"
 import "core:fmt"
 
-// Reserve through rear clearance. Only parallel, disjoint STRAIGHT bands may
-// share a node; turns/convergences retain exclusive ownership. This deliberately
-// excludes general compatible turning batches; upgrade to swept corridors later.
+// Reserve through rear clearance. A straight band may also enter when a
+// conservative bound proves it disjoint from a turning owner's remaining path.
+// Other turns/convergences remain exclusive; upgrade to general swept corridors
+// for broader compatible movement batches.
 Connector :: struct {
     active: bool,
     node, exit: int,
@@ -119,6 +120,16 @@ fit_connector :: proc(w: ^World, v: Vehicle, exit: int, lateral: f32) -> (c: Con
             }
         }
     }
+    // An uncontrolled approach has no zebra: a turning body may begin at its
+    // reserved entry instead of the mouth, if the same pavement test passes.
+    // Controlled approaches keep the crossing straight and untouched.
+    if signal_state(w, v.road) == .Uncontrolled && f.x*g.y-f.y*g.x != 0 {
+        early := max(v.distance, entry_distance(w, v.road, v.kind))-turn_start_distance(w, v.road)
+        for factor in ([]f32{1,0.75,0.5}) {
+            candidate, why := connector_candidate(w, v, exit, lateral, early, factor, 0)
+            if why == .None && connector_on_pavement(w, candidate, v.kind, hull[:]) { return candidate, .None }
+        }
+    }
     return Connector{}, .Tight_Turn
 }
 
@@ -153,7 +164,7 @@ connector_candidate :: proc(w: ^World, v: Vehicle, exit: int, lateral, delay, fa
     cross := f.x*g.y-f.y*g.x
     turn := turn_start_distance(w, v.road)
     // Left starts at rear clearance; right starts at the mouth center. The
-    // fitter may delay further, but never starts turning upstream of the mouth.
+    // fitter may delay further; only its uncontrolled fallback starts earlier.
     turn += delay
     parallel_shift := abs(cross) <= 0.00001 && abs((q.x-start.x)*f.y-(q.y-start.y)*f.x) > 0.00001
     // No zebra exists here: an uncontrolled width/lateral convergence may
@@ -251,6 +262,56 @@ straight_corridors_disjoint :: proc(a: Connector, ak: Vehicle_Kind, b: Connector
     return parallel_bands_disjoint(a.start, af, kind_width(ak), b.start, bf, kind_width(bk))
 }
 
+// The remaining cubic lies in its split control polygon's convex hull. Project
+// that hull, the remaining lead/tail, and the outgoing ray onto the straight
+// candidate's normal; inflate by the owner's body half-diagonal at every angle.
+remaining_corridor_disjoint :: proc(candidate: Connector, ck: Vehicle_Kind, owner: Connector, ok: Vehicle_Kind) -> bool {
+    if owner.tail <= 0 { return false }
+    forward, straight := straight_direction(candidate)
+    _, owner_straight := straight_direction(owner)
+    if !straight || owner_straight { return false }
+    nx, ny := -f64(forward.y), f64(forward.x)
+    origin_x, origin_y := f64(candidate.start.x), f64(candidate.start.y)
+    current, _ := connector_pose(owner, owner.progress)
+    finish, _ := connector_pose(owner, owner.length)
+    a := (f64(current.x)-origin_x)*nx+(f64(current.y)-origin_y)*ny
+    b := (f64(finish.x)-origin_x)*nx+(f64(finish.y)-origin_y)*ny
+    low, high := min(a, b), max(a, b)
+    scale := max(f64(1), abs(origin_x), abs(origin_y), abs(f64(current.x)), abs(f64(current.y)), abs(f64(finish.x)), abs(f64(finish.y)))
+    if owner.progress < owner.lead+owner.arc[64] {
+        t: f32
+        if owner.progress > owner.lead {
+            distance := owner.progress-owner.lead
+            for i in 1..<len(owner.arc) {
+                if distance <= owner.arc[i] {
+                    t = (f32(i-1)+(distance-owner.arc[i-1])/max(0.000001, owner.arc[i]-owner.arc[i-1]))/64
+                    break
+                }
+            }
+        }
+        projected: [4]f64
+        for point, i in owner.controls {
+            projected[i] = (f64(point.x)-origin_x)*nx+(f64(point.y)-origin_y)*ny
+            scale = max(scale, abs(f64(point.x)), abs(f64(point.y)))
+        }
+        // Scalar de Casteljau splitting is equivalent to projecting the 2D hull.
+        u := f64(t)
+        p := projected
+        p01, p12, p23 := p[0]+(p[1]-p[0])*u, p[1]+(p[2]-p[1])*u, p[2]+(p[3]-p[2])*u
+        p012, p123 := p01+(p12-p01)*u, p12+(p23-p12)*u
+        split := p012+(p123-p012)*u
+        low = min(low, split, p123, p23, p[3])
+        high = max(high, split, p123, p23, p[3])
+    }
+    // Runtime poses use f32. Inflate by 84 f32 epsilons at the coordinate
+    // scale; this can reject safe paths on very large maps, but never shrinks
+    // the clearance for a fixed world position. Upgrade to interval arithmetic
+    // before treating this as a numerical proof for arbitrary coordinates.
+    radius := f64(0.5*math.sqrt(kind_length(ok)*kind_length(ok)+kind_width(ok)*kind_width(ok))+0.5*kind_width(ck)+0.18)+0.0001+0.00001*scale
+    outward := f64(owner.outgoing.x)*nx+f64(owner.outgoing.y)*ny
+    return (low > radius && outward >= 0) || (high < -radius && outward <= 0)
+}
+
 receiving_reserved :: proc(w: ^World, road: int, distance: f32, kind: Vehicle_Kind, lateral: f32) -> bool {
     for v in w.vehicles {
         c := v.motion
@@ -317,6 +378,16 @@ connector_laterals :: proc(w: ^World, v: Vehicle, exit: int) -> [dynamic]f32 {
     if width < kind_width(v.kind) { return nil }
     desired := clamp(v.preferred_lateral, -limit, limit)
     candidates := make([dynamic]f32, 0, 2*len(w.vehicles)+3)
+    // Preserve an occupied world-space band across aligned links when it fits.
+    // Fitting, reservations and body checks still decide whether it is usable.
+    if exit >= 0 {
+        _, incoming := vehicle_pose(w, Vehicle{road = v.road})
+        _, outgoing := vehicle_pose(w, Vehicle{road = exit})
+        if incoming.x*outgoing.y-incoming.y*outgoing.x == 0 && incoming.x*outgoing.x+incoming.y*outgoing.y > 0 {
+            aligned := v.lateral+road_offset(w, v.road)-road_offset(w, exit)
+            if aligned >= -limit && aligned <= limit { append(&candidates, aligned) }
+        }
+    }
     append(&candidates, desired, -limit, limit, 0)
     if exit < 0 { clear(&candidates); append(&candidates, v.lateral) }
     for other in w.vehicles {
@@ -343,7 +414,7 @@ acquire_connector :: proc(w: ^World, i, exit: int) -> bool {
         geometry_found = true
         clear := true
         for other, j in w.vehicles {
-            if i != j && other.motion.active && other.motion.node == node && !straight_corridors_disjoint(c, v.kind, other.motion, other.kind) {
+            if i != j && other.motion.active && other.motion.node == node && !straight_corridors_disjoint(c, v.kind, other.motion, other.kind) && !remaining_corridor_disjoint(c, v.kind, other.motion, other.kind) {
                 clear = false
                 break
             }
@@ -354,7 +425,7 @@ acquire_connector :: proc(w: ^World, i, exit: int) -> bool {
         for other, j in w.vehicles {
             if i == j { continue }
             if other.road == exit && !other.motion.active && other.distance-kind_length(other.kind)*0.5 < c.end+kind_length(v.kind)*0.5+1.2 &&
-                abs(other.lateral-lateral) < (kind_width(v.kind)+kind_width(other.kind))*0.5+0.18 { clear = false; break }
+                (other.lane.active || abs(other.lateral-lateral) < (kind_width(v.kind)+kind_width(other.kind))*0.5+0.18) { clear = false; break }
         }
         if !clear { continue }
         trial := v
@@ -398,9 +469,15 @@ move_vehicle :: proc(w: ^World, i: int, budget: f32) -> (travelled: f32, finishe
                 if !acquire_connector(w, i, exit) { break }
                 continue
             }
+            if v.lane.active && !lane_rear_safe(w, i, v, false) { break }
             amount := min(left, min(0.1, boundary-v.distance))
             trial := v
             trial.distance += amount
+            if trial.lane.active {
+                trial.lateral, _ = lane_offset(trial)
+                if receiving_reserved(w, trial.road, trial.distance, trial.kind, trial.lateral) { break }
+                if trial.distance >= trial.lane.start+LANE_CHANGE_LENGTH { trial.lane = {} }
+            }
             if !body_clear(w, trial, i) { break }
             w.vehicles[i] = trial
             left -= amount

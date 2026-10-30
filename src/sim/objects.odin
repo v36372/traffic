@@ -129,6 +129,7 @@ scheduled_spawns :: proc(w: ^World, dt: f32) {
             if !fits { break }
             candidate.lateral, candidate.id = lateral, u64(w.spawned+1)
             if !source_supported(w, candidate) { break }
+            candidate.driver, _ = make_driver(w.behavior, w.behavior_seed, candidate.id, candidate.kind, spawn_persona(w.behavior, w.behavior_seed, candidate.id))
             append(&w.vehicles, candidate)
             runtime.admitted += 1
             runtime.pending -= 1

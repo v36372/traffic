@@ -1,6 +1,24 @@
-# Driver variation and rule-breaking — proposed, not implemented
+# Driver variation and rule-breaking
+
+Bounded, synthetic speed/headway traits are opt-in per class via `<driver>` as documented in [MAP_BUILDER.md](MAP_BUILDER.md). Stable driver IDs and the world seed key independent speed/headway and passing-side samples without consuming arrival RNG; traits persist through a trip. A class with a nontrivial speed or headway range also gets an independent acceleration sample from 1.4–2.6 m/s². Identical bounds retain the baseline 2 m/s². Speed factors never exceed the compliant baseline, following preference never removes physical clearance checks, and signal behavior is unchanged. Reset retains settings.
+
+With any nontrivial class distribution configured, a faster vehicle can choose a stable preferred side and make a continuous 12 m lateral maneuver around a slower leader on the same straight road, if its body fits and clearance checks permit it. Other classes can pass too, but not when all behavior ranges are fixed. The maneuver stays within the directed carriageway and away from junctions; it has no automatic return or queue filtering. Body checks are sampled, not continuous swept-volume certification. Reaction, amber decisions, junction filtering and violations remain unimplemented. All values are synthetic, not measured driving behavior.
 
 User request: configurable motorcycle behavior such as accelerating to catch a light, entering on amber and moving sideways to get ahead. This extends the authenticity goal; it does not excuse placement, collision or path-fitting bugs.
+
+## Reusable driver factory
+
+`sim.make_driver(config, seed, id, kind, persona)` returns an independent `Driver` value and an `ok` flag. Start with `sim.default_driver_config()`, then enable and set the desired class ranges. IDs must be nonzero; invalid vehicle kinds, personas or enabled ranges return `ok=false`. A disabled configuration uses baseline traits. Assign the result to a `Vehicle` of the same kind before adding it to a world configured with those ranges.
+
+```odin
+config := sim.default_driver_config()
+config.enabled = true
+config.classes[int(sim.Vehicle_Kind.Motorcycle)] = {0.65, 1, 0.5, 1.5}
+driver, ok := sim.make_driver(config, 42, 1, .Motorcycle, .Assertive)
+// Configure the world before starting it; then assign driver to a motorcycle.
+```
+
+Each driver owns its persistent traits and `Cruising`, `Following`, `Stopped_Signal`, `Passing` or `Junction` mode. A shared state machine uses the chosen persona and vehicle kind: assertive, balanced and cautious drivers require respectively more than 0.5, 1 and 2 m/s advantage before attempting a pass; buses and trucks require another 0.5 m/s. All use the same physical, signal and clearance checks. The constructor is deterministic and does not consume demand RNG. Both spawn paths create drivers through it; in a varied configuration, each spawned trip gets a deterministic synthetic persona. This is one parameterized machine, not separately authored driving models for every combination. Persona-specific behavior currently only changes passing decisions; reaction and infractions are not implemented.
 
 ## Five tuning inputs
 
@@ -20,7 +38,7 @@ Numbers and presets will be explicitly synthetic until calibrated against observ
 
 Separate ordinary actions, deliberate infractions and simulation defects. Clearing a crossing already entered before the signal change is not the same event as entering after it. Amber decisions depend on distance, speed, reaction/braking ability and willingness to proceed. Acceleration to catch a light must obey dynamics and should not rely on perfect knowledge of an unseen signal clock.
 
-Filtering needs a continuous, validated lateral path and merge/gap checks. Do not change a vehicle's lateral coordinate instantaneously or ignore opposite-direction vehicles. Current fixed lateral source slots are **not** filtering. Wrong-way encroachment, red entry and sidewalk use must be separately identifiable; none is silently implied by an aggressiveness slider.
+General queue filtering needs continuous, validated lateral paths and merge/gap checks. The implemented link-only passing maneuver is not queue filtering: it does not cross a centerline, enter a junction during the lane change or bypass a red light. Fixed lateral source slots are also **not** filtering. Wrong-way encroachment, red entry and sidewalk use must be separately identifiable; none is silently implied by an aggressiveness slider.
 
 Rule-breaking does not disable body overlap checks, swept movement validation or pavement geometry. Crash mechanics are a separate explicit feature, not numerical overlap presented as realism. If conservative conflict reservations prevent an attempted unsafe entry, record the attempt as blocked rather than pretend a violation happened.
 
@@ -33,8 +51,8 @@ Therefore do not automatically count every vehicle moving during amber as an inf
 ## Implementation order
 
 1. Finish the current geometry/crossing regressions and keep a fully compliant deterministic baseline.
-2. Add speed/headway variation and reaction/amber decisions with auditable counters and XML settings.
-3. Add continuous motorcycle filtering, then separately controlled prohibited maneuvers once their movement/conflict rules exist.
+2. Extend the implemented speed/headway/acceleration variation with reaction/amber decisions and auditable counters.
+3. Extend link-only passing to queue filtering, then separately controlled prohibited maneuvers once their movement/conflict rules exist.
 
 Do not accept schema settings for behavior that has no runtime implementation. Police presence/enforcement can later modify decision likelihood; congestion and delay modify patience. Those management links are not implemented yet.
 

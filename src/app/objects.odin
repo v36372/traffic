@@ -35,13 +35,13 @@ load_map :: proc(world: ^sim.World, path: string, demand_scale: f32 = 1) -> bool
     if err == nil { os.file_info_delete(info, context.allocator) }
     if err != .Not_Exist {
         if err != nil { fmt.eprintf("Objects unavailable: %s; retaining prior scene\n", sidecar); return false }
-        signals, spawns, objects_ok := mapdata.load_objects(sidecar)
+        signals, spawns, drivers, objects_ok := mapdata.load_objects(sidecar)
         defer delete(signals)
         defer delete(spawns)
         // Scale only the candidate configuration, before clocks start. configure
         // enforces timer bounds; reset copies these adjusted intervals unchanged.
         for &source in spawns { source.interval /= demand_scale }
-        if !objects_ok || !sim.configure(&candidate, signals[:], spawns[:]) {
+        if !objects_ok || !sim.configure(&candidate, signals[:], spawns[:]) || !sim.configure_drivers(&candidate, drivers) {
             fmt.eprintf("Objects invalid: %s; retaining prior scene\n", sidecar)
             return false
         }
@@ -62,7 +62,7 @@ reset_world :: proc(world: ^sim.World) -> bool {
     candidate: sim.World
     sim.init(&candidate, world.nodes[:], world.roads[:])
     defer sim.destroy(&candidate)
-    if !sim.configure(&candidate, world.signals[:], world.spawns[:]) { return false }
+    if !sim.configure(&candidate, world.signals[:], world.spawns[:]) || !sim.configure_drivers(&candidate, world.behavior) { return false }
     world^, candidate = candidate, world^
     return true
 }

@@ -26,10 +26,11 @@ test_objects_transaction_and_optional_absence :: proc(t: ^testing.T) {
     // Truly missing objects are valid for older authored maps and OSM data.
     testing.expect(t, load_map(&world, path))
     testing.expect(t, len(world.signals) == 0 && len(world.spawns) == 0)
-    valid := "TRAFFIC_OBJECTS,1\nS,1,2,1,1,0\nP,0,2,0.8,0\n"
+    valid := "TRAFFIC_OBJECTS,1\nS,1,2,1,1,0\nP,0,2,0.8,0\nD,0,0.6,0.9,0.5,1.5\n"
     testing.expect(t, os.write_entire_file(sidecar, valid) == nil)
     testing.expect(t, load_map(&world, path))
-    testing.expect(t, len(world.signals) == 1 && len(world.spawns) == 1)
+    testing.expect(t, len(world.signals) == 1 && len(world.spawns) == 1 && world.behavior.enabled && world.behavior.classes[0].speed_min == 0.6)
+    testing.expect(t, reset_world(&world) && world.behavior.enabled && world.behavior.classes[0].headway_max == 1.5)
     for _ in 0..<100 { sim.step(&world, f32(TICK)) }
     clock, rng, spawned, pending := world.time, world.rng, world.spawned, world.pending
     nodes, roads, vehicles := raw_data(world.nodes), raw_data(world.roads), raw_data(world.vehicles)
@@ -37,13 +38,13 @@ test_objects_transaction_and_optional_absence :: proc(t: ^testing.T) {
     active := len(world.vehicles)
     // Both malformed structure and semantically invalid topology must preserve
     // the complete live world, not silently load geometry without its controls.
-    for invalid in ([]string{"", "TRAFFIC_OBJECTS,9\n", "TRAFFIC_OBJECTS,1\nS,1,nan,1,1,0\n", "TRAFFIC_OBJECTS,1\nS,0,2,1,1,0\n", "TRAFFIC_OBJECTS,1\nP,0,3,0.8,0\n"}) {
+    for invalid in ([]string{"", "TRAFFIC_OBJECTS,9\n", "TRAFFIC_OBJECTS,1\nS,1,nan,1,1,0\n", "TRAFFIC_OBJECTS,1\nS,0,2,1,1,0\n", "TRAFFIC_OBJECTS,1\nP,0,3,0.8,0\n", "TRAFFIC_OBJECTS,1\nD,0,0.5,1.1,0.4,2\n"}) {
         testing.expect(t, os.write_entire_file(sidecar, invalid) == nil)
         testing.expect(t, !load_map(&world, path))
         testing.expect(t, raw_data(world.nodes) == nodes && raw_data(world.roads) == roads)
         testing.expect(t, raw_data(world.vehicles) == vehicles && len(world.vehicles) == active)
         testing.expect(t, raw_data(world.signals) == signals && raw_data(world.spawns) == spawns)
-        testing.expect(t, world.time == clock && world.rng == rng && world.spawned == spawned && world.pending == pending)
+        testing.expect(t, world.time == clock && world.rng == rng && world.spawned == spawned && world.pending == pending && world.behavior.enabled)
     }
     // A present path that isn't readable as an objects file is NOT optional.
     testing.expect(t, os.remove(sidecar) == nil)
@@ -62,6 +63,17 @@ expect_same_traffic :: proc(t: ^testing.T, a, b: ^sim.World) {
     if len(a.vehicles) == len(b.vehicles) {
         for vehicle, i in a.vehicles { testing.expect(t, vehicle == b.vehicles[i]) }
     }
+}
+
+@(test)
+test_hcm_map_enables_motorcycle_preferences :: proc(t: ^testing.T) {
+    world: sim.World
+    sim.init_demo(&world)
+    defer sim.destroy(&world)
+    testing.expect(t, load_map(&world, "data/hcm.csv"))
+    testing.expect(t, world.behavior.enabled && len(world.spawns) == 0 && len(world.signals) == 0)
+    riders := world.behavior.classes[int(sim.Vehicle_Kind.Motorcycle)]
+    testing.expect(t, riders.speed_min == 0.65 && riders.speed_max == 1 && riders.headway_min == 0.5 && riders.headway_max == 1.5)
 }
 
 @(test)

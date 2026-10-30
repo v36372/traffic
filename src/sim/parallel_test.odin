@@ -160,3 +160,22 @@ test_parallel_commitment_clears_but_red_band_must_wait :: proc(t: ^testing.T) {
     for _ in 0..<800 { step(&w, 0.05); expect_bodies_clear(t, &w) }
     testing.expect(t, w.completed == 3 && len(w.vehicles) == 0 && w.pending == 0 && len(w.motion_issues) == 0)
 }
+
+@(test)
+test_aligned_receiving_band_accounts_for_unequal_reciprocal_offsets :: proc(t: ^testing.T) {
+    w: World
+    init(&w, []Node{{{-60,0}}, {{0,0}}, {{60,0}}}, []Road{{0,1,5.5,8}, {1,0,5.5,8}, {1,2,3.5,8}, {2,1,3.5,8}})
+    defer destroy(&w)
+    testing.expect(t, configure(&w, nil, []Spawn_Point{{0,2,86400,.Motorcycle}}))
+    v := Vehicle{road = 0, lateral = 0, preferred_lateral = 0, kind = .Motorcycle}
+    candidates := connector_laterals(&w, v, 2)
+    defer delete(candidates)
+    testing.expect(t, abs(candidates[0]+1) < 0.00001, "world corridor must account for both directed road offsets")
+    c, problem := make_connector(&w, v, 2, candidates[0])
+    _, straight := straight_direction(c)
+    testing.expect(t, problem == .None && straight)
+    v.lateral = -2
+    outside := connector_laterals(&w, v, 2)
+    defer delete(outside)
+    testing.expect(t, outside[0] == 0, "an infeasible world corridor must not be clamped into a false straight")
+}

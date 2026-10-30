@@ -21,9 +21,9 @@ main :: proc() {
         delete(roads)
         if name != "hcm" {
             sidecar := fmt.aprintf("build/maps/%s-objects.csv", name)
-            signals, sources, ok := mapdata.load_objects(sidecar)
+            signals, sources, drivers, ok := mapdata.load_objects(sidecar)
             delete(sidecar)
-            assert(ok && sim.configure(&w, signals[:], sources[:]))
+            assert(ok && sim.configure(&w, signals[:], sources[:]) && sim.configure_drivers(&w, drivers))
             delete(signals)
             delete(sources)
         }

@@ -1,12 +1,12 @@
 # HCMC Traffic
 
-**Remaining work:** [prioritized roadmap](docs/ROADMAP.md) · [verified status](docs/STATUS.md) · [planned driver behavior](docs/DRIVER_BEHAVIOR.md). This is a prototype; the overall HCMC authenticity target has not been met.
+**Remaining work:** [prioritized roadmap](docs/ROADMAP.md) · [verified status](docs/STATUS.md) · [driver behavior](docs/DRIVER_BEHAVIOR.md). This is a prototype; the overall HCMC authenticity target has not been met.
 
 An Odin + raylib traffic-management game in development. **Current milestone: Phase A technical prototype**, not a complete management game or calibrated traffic model.
 
 ## Run
 
-Currently targets Linux with Odin's **raylib 6.0 bindings**, Python 3, a C compiler, CMake, curl, tar, sha256sum, and X11/OpenGL development libraries. A working desktop display is required to run the viewer. Run commands from this repository's root:
+Targets Linux x86_64/aarch64 and macOS arm64 with Odin's **raylib 6.0 bindings**, Python 3, a C compiler, CMake, curl, and tar. Linux also requires sha256sum and X11/OpenGL development libraries; macOS uses shasum and the Xcode command-line tools. A working desktop display is required to run the viewer. Run commands from this repository's root:
 
 ```sh
 make build
@@ -66,7 +66,7 @@ mkdir -p build/capture-busy
 
 This captures 100 frames over 10 simulated seconds, spanning a green release. Use `--demand-scale 0.25` and a different directory for the quieter synthetic comparison. These multipliers are not measured HCMC demand. `odin run tools/check_capture` replays the same benchmark and emits focused-node vehicle poses as CSV; it does not manipulate the rendered scene.
 
-Crosswalk paint now exists, but pedestrian behavior does not. Seeded driver personalities and deliberate infractions are [planned](docs/DRIVER_BEHAVIOR.md), not implemented. See [current verified status](docs/STATUS.md).
+Crosswalk paint now exists, but pedestrian behavior does not. Opt-in seeded speed and headway preferences are available in authored XML; filtering and deliberate infractions are [not implemented](docs/DRIVER_BEHAVIOR.md). See [current verified status](docs/STATUS.md).
 
 ## Current boundaries
 

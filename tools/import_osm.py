@@ -3,7 +3,9 @@
 import argparse
 import csv
 import math
+import re
 import xml.etree.ElementTree as ET
+from collections import deque
 
 # Keep roads usable by general motor traffic; this is not a full access interpreter.
 HIGHWAYS = {'motorway', 'motorway_link', 'trunk', 'trunk_link', 'primary', 'primary_link',
@@ -12,7 +14,115 @@ HIGHWAYS = {'motorway', 'motorway_link', 'trunk', 'trunk_link', 'primary', 'prim
 ORIGIN_LAT, ORIGIN_LON = 10.7725, 106.6995
 
 
-def bake(source, destination, buildings=None):
+def speed_limit(tags, direction, way_id):
+    key = f'maxspeed:{direction}' if f'maxspeed:{direction}' in tags else 'maxspeed'
+    if key not in tags:
+        return 8.33, 'default'
+    value = tags[key].strip()
+    match = re.fullmatch(r'(\d+(?:\.\d+)?)\s*(km/h|mph)?', value)
+    if not match:
+        raise ValueError(f'unsupported {key}={value} on way {way_id}')
+    speed = round(float(match[1]) * (0.44704 if match[2] == 'mph' else 1 / 3.6), 3)
+    if not 0 < speed < 100:
+        raise ValueError(f'invalid {key}={value} on way {way_id}')
+    return speed, 'osm'
+
+
+def report_connectivity(edges):
+    # Weak connectivity ignores edge direction; it cannot establish route reachability.
+    neighbors, outgoing, incoming = {}, {}, {}
+    for a, b in edges:
+        neighbors.setdefault(a, set()).add(b)
+        neighbors.setdefault(b, set()).add(a)
+        outgoing.setdefault(a, set()).add(b)
+        outgoing.setdefault(b, set())
+        incoming.setdefault(b, set()).add(a)
+        incoming.setdefault(a, set())
+    remaining = set(neighbors)
+    components = []
+    for start in sorted(neighbors, key=int):
+        if start not in remaining:
+            continue
+        remaining.remove(start)
+        stack, nodes = [start], []
+        while stack:
+            node = stack.pop()
+            nodes.append(node)
+            for neighbor in neighbors[node] & remaining:
+                remaining.remove(neighbor)
+                stack.append(neighbor)
+        components.append((min(nodes, key=int), len(nodes)))
+    components.sort(key=lambda component: (-component[1], int(component[0])))
+    print(f'weak_components={len(components)}')
+    if len(components) > 1:
+        for node, count in components[:5]:
+            print(f'  component: nodes={count} example_osm_node={node}')
+        if len(components) > 5:
+            print(f'  additional_components={len(components) - 5}')
+
+    # Iterative Kosaraju traversal avoids a recursion limit on long road chains.
+    visited, order = set(), []
+    for start in sorted(outgoing, key=int):
+        if start in visited:
+            continue
+        visited.add(start)
+        stack = [(start, iter(outgoing[start]))]
+        while stack:
+            node, adjacent = stack[-1]
+            neighbor = next(adjacent, None)
+            if neighbor is None:
+                order.append(node)
+                stack.pop()
+            elif neighbor not in visited:
+                visited.add(neighbor)
+                stack.append((neighbor, iter(outgoing[neighbor])))
+    remaining = set(incoming)
+    components = []
+    for start in reversed(order):
+        if start not in remaining:
+            continue
+        remaining.remove(start)
+        stack, nodes = [start], []
+        while stack:
+            node = stack.pop()
+            nodes.append(node)
+            for neighbor in incoming[node] & remaining:
+                remaining.remove(neighbor)
+                stack.append(neighbor)
+        components.append((min(nodes, key=int), len(nodes)))
+    components.sort(key=lambda component: (-component[1], int(component[0])))
+    print(f'strong_components={len(components)}')
+    if len(components) > 1:
+        for node, count in components[:5]:
+            print(f'  strong_component: nodes={count} example_osm_node={node}')
+        if len(components) > 5:
+            print(f'  additional_strong_components={len(components) - 5}')
+
+
+def report_routes(edges, routes):
+    outgoing = {}
+    for a, b in edges:
+        outgoing.setdefault(a, []).append(b)
+        outgoing.setdefault(b, [])
+    for start, end in routes:
+        if start not in outgoing or end not in outgoing:
+            print(f'route {start} -> {end}: missing_node')
+            continue
+        distances = {start: 0}
+        queue = deque([start])
+        while queue and end not in distances:
+            node = queue.popleft()
+            for neighbor in outgoing[node]:
+                if neighbor not in distances:
+                    distances[neighbor] = distances[node] + 1
+                    queue.append(neighbor)
+        if end in distances:
+            print(f'route {start} -> {end}: reachable edges={distances[end]}')
+        else:
+            print(f'route {start} -> {end}: unreachable')
+
+
+def bake(source, destination, buildings=None, routes=()):
     root = ET.parse(source).getroot()
     if root.tag != 'osm':
         raise ValueError('expected OSM XML')
@@ -26,15 +136,25 @@ def bake(source, destination, buildings=None):
         coords[node.attrib['id']] = (float(f'{x:.3f}'), float(f'{y:.3f}'))
     edges = []
     used = set()
+    speed_sources = {'osm': 0, 'default': 0}
+    ignored_tags = {key: [] for key in ('layer', 'bridge', 'tunnel', 'turn:lanes', 'conditional')}
+    selected_ways = set()
     for way in root.findall('way'):
         tags = {t.attrib['k']: t.attrib['v'] for t in way.findall('tag')}
         if tags.get('highway') not in HIGHWAYS or tags.get('access') in ('no', 'private') or tags.get('motor_vehicle') in ('no', 'private'):
             continue
+        for category in ignored_tags:
+            if any(key == category or (category == 'turn:lanes' and key.startswith('turn:lanes:')) or
+                   (category == 'conditional' and key.endswith(':conditional')) for key in tags):
+                ignored_tags[category].append(way.attrib['id'])
+        selected_ways.add(way.attrib['id'])
         direction = tags.get('oneway', '')
         if direction not in ('', 'yes', '1', 'true', '-1', 'no', '0', 'false'):
             raise ValueError(f"unsupported oneway={direction} on way {way.attrib['id']}")
         forward = direction != '-1'
         reverse = direction in ('no', '0', 'false') or (direction == '' and tags.get('junction') != 'roundabout' and tags['highway'] not in ('motorway', 'motorway_link'))
+        forward_speed = speed_limit(tags, 'forward', way.attrib['id']) if forward else None
+        backward_speed = speed_limit(tags, 'backward', way.attrib['id']) if reverse or direction == '-1' else None
         refs = [n.attrib['ref'] for n in way.findall('nd')]
         if len(refs) < 2:
             raise ValueError(f"too few nodes on way {way.attrib['id']}")
@@ -46,21 +166,35 @@ def bake(source, destination, buildings=None):
                 raise ValueError(f"zero-length segment after rounding on way {way.attrib['id']}: {a}, {b}")
             used.update((a, b))
             if forward:
-                edges.append((a, b))
+                edges.append((a, b, forward_speed[0]))
+                speed_sources[forward_speed[1]] += 1
             if reverse or direction == '-1':
-                edges.append((b, a))
+                edges.append((b, a, backward_speed[0]))
+                speed_sources[backward_speed[1]] += 1
     ids = sorted(used, key=int)
     index = {id_: i for i, id_ in enumerate(ids)}
     if not edges:
         raise ValueError('no usable road edges')
+    restrictions = [relation.attrib['id'] for relation in root.findall('relation')
+                    if any(t.get('k') == 'type' and t.get('v') == 'restriction' for t in relation.findall('tag'))
+                    and any(m.get('type') == 'way' and m.get('ref') in selected_ways for m in relation.findall('member'))]
     with open(destination, 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f, lineterminator='\n')
         writer.writerow(['HCM_MAP', '1'])
         for id_ in ids:
             x, y = coords[id_]
             writer.writerow(['N', f'{x:.3f}', f'{y:.3f}'])
-        for a, b in edges:
-            writer.writerow(['E', index[a], index[b], '3.5', '8.33'])
+        for a, b, speed in edges:
+            writer.writerow(['E', index[a], index[b], '3.5', f'{speed:.3f}'.rstrip('0').rstrip('.')])
+    directed_edges = [(a, b) for a, b, _ in edges]
+    report_connectivity(directed_edges)
+    report_routes(directed_edges, routes)
+    print(f'speed_sources={speed_sources}')
+    for category, way_ids in ignored_tags.items():
+        if way_ids:
+            print(f'ignored_{category}_ways={len(way_ids)} example_osm_ways={",".join(way_ids[:5])}')
+    if restrictions:
+        print(f'ignored_restriction_relations={len(restrictions)} example_osm_relations={",".join(restrictions[:5])}')
     if buildings is not None:
         written, skipped = bake_buildings(root, coords, buildings)
         print(f'buildings={written} unsupported_outlines={skipped}')
@@ -148,5 +282,7 @@ if __name__ == '__main__':
     parser.add_argument('source')
     parser.add_argument('destination')
     parser.add_argument('--buildings', metavar='OUTPUT')
+    parser.add_argument('--route', nargs=2, action='append', default=[], metavar=('FROM_OSM_NODE', 'TO_OSM_NODE'),
+                        help='audit directed reachability between OSM node IDs (repeatable)')
     args = parser.parse_args()
-    print('nodes=%d directed_edges=%d' % bake(args.source, args.destination, args.buildings))
+    print('nodes=%d directed_edges=%d' % bake(args.source, args.destination, args.buildings, args.route))

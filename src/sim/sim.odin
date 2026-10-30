@@ -12,7 +12,9 @@ Vehicle :: struct {
     spawn_index: int,
     id: u64,
     preferred_lateral: f32,
+    driver: Driver,
     motion: Connector,
+    lane: Lane_Change,
 }
 Signal_Plan :: struct { node: int, green, amber, clearance, offset: f32 }
 Spawn_Point :: struct { road, destination: int, interval: f32, kind: Vehicle_Kind }
@@ -26,6 +28,8 @@ World :: struct {
     completed: int,
     spawned: int,
     rng: u64,
+    behavior_seed: u64,
+    behavior: Driver_Config,
     spawn_accumulator: f32,
     signals: [dynamic]Signal_Plan,
     spawns: [dynamic]Spawn_Point,
@@ -89,6 +93,8 @@ init :: proc(w: ^World, nodes: []Node, roads: []Road, seed: u64 = 1) {
     for n in nodes { append(&w.nodes, n) }
     for r in roads { append(&w.roads, r) }
     w.rng = seed
+    w.behavior_seed = seed
+    w.behavior = default_driver_config()
 }
 
 init_demo :: proc(w: ^World, seed: u64 = 1) {
@@ -187,7 +193,9 @@ try_spawn :: proc(w: ^World) {
     if structural != .None { report_motion_issue(w, candidate, successor(w, candidate), structural); return }
     if !free_lateral(w, road_id, 0, kind, lateral) { return }
     if !source_supported(w, candidate) { return }
-    append(&w.vehicles, Vehicle{road = road_id, lateral = lateral, kind = kind, spawn_index = -1, id = u64(w.spawned+1), preferred_lateral = lateral})
+    candidate.id, candidate.preferred_lateral = u64(w.spawned+1), lateral
+    candidate.driver, _ = make_driver(w.behavior, w.behavior_seed, candidate.id, kind, spawn_persona(w.behavior, w.behavior_seed, candidate.id))
+    append(&w.vehicles, candidate)
     w.spawned += 1
 }
 
@@ -231,14 +239,43 @@ step_tick :: proc(w: ^World, dt: f32) {
     i := 0
     for i < len(w.vehicles) {
         v := w.vehicles[i]
+        update_driver_mode(w, i)
+        if w.vehicles[i].driver.mode == .Following { try_overtake(w, i) }
+        v = w.vehicles[i]
         target := min(w.roads[v.road].speed_limit, kind_speed(v.kind))
-        if v.motion.active { target = min(target, 4) }
+        if v.motion.active && v.motion.exit >= 0 { target = min(target, w.roads[v.motion.exit].speed_limit) }
+        headway := f32(0.8)
+        if w.behavior.enabled {
+            target *= v.driver.traits.speed_factor
+            headway = v.driver.traits.headway
+        }
+        // These are targets, not hard limits: finite braking can leave an
+        // entering vehicle temporarily above a curve or receiving-road target.
+        if v.motion.active {
+            _, straight := straight_direction(v.motion)
+            if !straight { target = min(target, 4) }
+        }
         if !v.motion.active {
+            // Brake towards a slower exit or a known change of heading before
+            // commitment. Parallel lateral shifts may still fit as curves;
+            // late admissions and finite ticks can also exceed these targets.
+            exit := successor(w, v)
+            if exit >= 0 {
+                exit_target := min(w.roads[exit].speed_limit, kind_speed(v.kind))
+                if w.behavior.enabled { exit_target *= v.driver.traits.speed_factor }
+                _, incoming := vehicle_pose(w, v)
+                _, outgoing := vehicle_pose(w, Vehicle{road = exit})
+                if incoming.x*outgoing.y-incoming.y*outgoing.x != 0 || incoming.x*outgoing.x+incoming.y*outgoing.y <= 0 {
+                    exit_target = min(exit_target, 4)
+                }
+                distance := max(0, entry_distance(w, v.road, v.kind)-v.distance)
+                target = min(target, math.sqrt(exit_target*exit_target+8*distance))
+            }
             for lead, j in w.vehicles {
                 if i == j || lead.road != v.road || lead.distance <= v.distance { continue }
                 if abs(lead.lateral-v.lateral) >= (kind_width(lead.kind)+kind_width(v.kind))*0.5+0.18 { continue }
                 gap := lead.distance-v.distance-(kind_length(lead.kind)+kind_length(v.kind))*0.5
-                if gap < 1+v.speed*0.8 { target = min(target, max(0, lead.speed+max(0, gap)*0.7)) }
+                if gap < 1+v.speed*headway { target = min(target, max(0, lead.speed+max(0, gap)*0.7)) }
             }
             stop := entry_distance(w, v.road, v.kind)
             state := signal_state(w, v.road)
@@ -247,7 +284,9 @@ step_tick :: proc(w: ^World, dt: f32) {
             }
         }
         speed := v.speed
-        if speed < target { speed = min(target, speed+2*dt) } else { speed = max(target, speed-4*dt) }
+        acceleration := f32(2)
+        if w.behavior.enabled { acceleration = v.driver.traits.acceleration }
+        if speed < target { speed = min(target, speed+acceleration*dt) } else { speed = max(target, speed-4*dt) }
         budget := speed*dt
         if !v.motion.active {
             for lead, j in w.vehicles {
@@ -265,6 +304,7 @@ step_tick :: proc(w: ^World, dt: f32) {
             continue
         }
         w.vehicles[i].speed = min(speed, travelled/dt)
+        update_driver_mode(w, i)
         i += 1
     }
 }

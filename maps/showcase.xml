@@ -38,6 +38,9 @@
   <signal id="east-cross" node="n21" green="8" amber="2" clearance="1" offset="17"/>
   <signal id="north-gate" node="n12" green="8" amber="2" clearance="1" offset="7"/>
 
+  <!-- Synthetic individual preferences, not measured HCMC behavior. -->
+  <driver kind="motorcycle" speed_min="0.65" speed_max="1" headway_min="0.5" headway_max="1.5"/>
+
   <!-- Scheduled cross-neighborhood journeys; motorcycles dominate arrival rate. -->
   <spawn id="moto-west" road="h01" destination="n31" interval="5" kind="motorcycle"/>
   <!-- Exercise a visible left turn at the focused junction, not only straight trips. -->

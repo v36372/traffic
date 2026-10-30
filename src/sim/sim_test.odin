@@ -86,6 +86,7 @@ test_narrowing_transition_and_blocked_recovery :: proc(t: ^testing.T) {
     testing.expect(t, blocked.vehicles[0].road == 0)
     testing.expect(t, !blocked.vehicles[0].motion.active && blocked.vehicles[0].distance+kind_length(.Car)*0.5 <= stop_line_distance(&blocked, 0)+0.001)
     blocked.vehicles[1].distance = 20
+    blocked.roads[1].speed_limit = 6
     for _ in 0..<200 {
         step(&blocked, 0.05)
         testing.expect(t, !bodies_overlap(&blocked, blocked.vehicles[0], blocked.vehicles[1]))

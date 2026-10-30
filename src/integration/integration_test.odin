@@ -78,7 +78,7 @@ authored_maps_use_the_same_runtime :: proc(t: ^testing.T) {
         objects_path := fmt.aprintf("build/maps/%s-objects.csv", name)
         nodes, roads, ok := mapdata.load(path)
         buildings, buildings_ok := mapdata.load_buildings(building_path)
-        signals, spawns, objects_ok := mapdata.load_objects(objects_path)
+        signals, spawns, drivers, objects_ok := mapdata.load_objects(objects_path)
         delete(path)
         delete(building_path)
         delete(objects_path)
@@ -86,7 +86,7 @@ authored_maps_use_the_same_runtime :: proc(t: ^testing.T) {
         if ok {
             world: sim.World
             sim.init(&world, nodes[:], roads[:], 42)
-            configured := sim.configure(&world, signals[:], spawns[:])
+            configured := sim.configure(&world, signals[:], spawns[:]) && sim.configure_drivers(&world, drivers)
             testing.expect(t, configured, "compiled objects must pass runtime topology validation")
             if name == "intersection" {
                 testing.expect(t, len(world.signals) > 0 && len(world.spawns) > 0, "intersection exercises operational objects")

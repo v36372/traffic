@@ -62,6 +62,7 @@ def compile_map(source):
         raise ValueError('unsupported version or empty map name')
     nodes, roads, buildings, signals, spawns = {}, [], [], [], []
     road_ids, building_ids, signal_ids, spawn_ids = set(), set(), set(), set()
+    drivers = {}
     for child in root:
         if child.tag == 'node':
             attrs(child, ('id', 'x', 'y'))
@@ -97,6 +98,17 @@ def compile_map(source):
                 raise ValueError(f'duplicate {child.tag} id: {id_}')
             ids.add(id_)
             (signals if child.tag == 'signal' else spawns).append(child)
+        elif child.tag == 'driver':
+            attrs(child, ('kind', 'speed_min', 'speed_max', 'headway_min', 'headway_max'))
+            kind = child.get('kind')
+            if len(child) or kind not in VEHICLES or kind in drivers:
+                raise ValueError('invalid or duplicate driver class')
+            keys = ('speed_min', 'speed_max', 'headway_min', 'headway_max')
+            values = [number(child.get(k), k, -math.inf, math.inf) for k in keys]
+            raw = [float(child.get(k)) for k in keys]
+            if any(not (0.5 <= v[0] <= v[1] <= 1 and 0.4 <= v[2] <= v[3] <= 2) for v in (raw, values)):
+                raise ValueError('invalid driver bounds')
+            drivers[kind] = values
         elif child.tag == 'building':
             attrs(child, ('id', 'kind', 'height'))
             id_ = ident(child.get('id'))
@@ -140,6 +152,8 @@ def compile_map(source):
         if direction == 'twoway':
             edges.append(['E', indexes[b], indexes[a], width, speed])
     objects = [['TRAFFIC_OBJECTS', '1']]
+    for kind, values in drivers.items():
+        objects.append(['D', VEHICLES[kind][0], *values])
     controlled = set()
     for signal in signals:
         node = signal.get('node')

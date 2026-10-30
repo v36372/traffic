@@ -119,6 +119,24 @@ class BuildMapTest(unittest.TestCase):
             source.write_text(xml.replace('width="3.5"', 'width="1.9"').replace('kind="motorcycle"', 'kind="car"'))
             build(source, output)  # 1.9 rounds to the same f32 as sim's car width.
 
+    def test_driver_configuration(self):
+        driver = '<driver kind="motorcycle" speed_min="0.7" speed_max="1" headway_min="0.4" headway_max="2"/>'
+        with tempfile.TemporaryDirectory() as d:
+            source, output = Path(d) / 'in.xml', Path(d) / 'out.csv'
+            source.write_text(BASE.replace('</map>', driver + '</map>'))
+            build(source, output)
+            rows = list(csv.reader((Path(d) / 'out-objects.csv').read_text().splitlines()))
+            self.assertEqual(rows[1][0:2], ['D', '0'])
+            self.assertAlmostEqual(float(rows[1][2]), 0.7)
+            for bad in (driver + driver, driver.replace('1" headway', '1.1" headway'),
+                        driver.replace('0.4', 'nan'), driver.replace('motorcycle', 'scooter'),
+                        driver.replace('0.7', '0.499999999'), driver.replace('1" headway', '1.000000001" headway'),
+                        driver.replace('0.4', '0.399999999'), driver.replace('2"/>', '2.000000001"/>'),
+                        driver.replace('0.7', '0.700000001').replace('1" headway', '0.7" headway'),
+                        driver.replace('headway_min="0.4"', 'headway_min="0.800000001"').replace('headway_max="2"', 'headway_max="0.8"')):
+                source.write_text(BASE.replace('</map>', bad + '</map>'))
+                with self.assertRaises(ValueError): build(source, output)
+
     def test_examples(self):
         sources = sorted((ROOT / 'maps').glob('*.xml'))
         self.assertTrue({'intersection', 'bottleneck', 'downtown', 'signalized', 'showcase'} <= {source.stem for source in sources})

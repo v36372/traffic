@@ -13,8 +13,14 @@ vehicle_pose :: proc(w: ^World, v: Vehicle) -> (position, forward: Vec2) {
     a, b := w.nodes[road.from].position, w.nodes[road.to].position
     forward = {(b.x-a.x)/length, (b.y-a.y)/length}
     lateral := v.lateral+road_offset(w, v.road)
+    slope: f32
+    if v.lane.active { lateral, slope = lane_offset(v); lateral += road_offset(w, v.road) }
     distance := clamp(v.distance, 0, length)
     position = {a.x+forward.x*distance-forward.y*lateral, a.y+forward.y*distance+forward.x*lateral}
+    if v.lane.active {
+        n := math.sqrt(1+slope*slope)
+        forward = {(forward.x-forward.y*slope)/n, (forward.y+forward.x*slope)/n}
+    }
     return
 }
 

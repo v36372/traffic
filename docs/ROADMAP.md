@@ -4,8 +4,8 @@ The current deliverable is a tested Odin/raylib prototype, **not a finished game
 
 ## 1. Fix authentic moving traffic — highest priority
 
-- **Busy discharge is too serialized.** In the recorded 87–97 s showcase window, one motorcycle owns the focused junction until roughly 95.2 s, followed by another. Parallel-discharge fixtures pass, but that behavior is not reproduced in this scene. Investigate preferred world-space corridor continuity, safe compatible converging/turning paths, admission ordering and the blanket 4 m/s connector speed cap. Do not raise the population cap or manipulate screenshots to disguise low throughput.
-- **Improve path-fitting coverage.** One truck remains held on an unsupported authored maneuver; imported OSM has many unsupported short links, U-turns and tight curves. Explore movement-aware routing and multi-edge body occupancy/shape-node treatment. The bounded center-tangent cubic fitter is not proof that a real vehicle cannot make a turn. Investigate rear-axle/body-reference kinematics before adding increasingly arbitrary curve trials.
+- **Busy discharge needs visual review and further work.** The prior recorded 87–97 s showcase window serialized the focused junction. The current headless replay with driver preferences and passing enabled produces up to two simultaneous owners; it has not yet passed independent footage review. Straight connectors now use road/class speed targets while curved connectors retain a conservative 4 m/s target, not a hard limit. Investigate safe compatible converging/turning paths, admission ordering and physically calibrated curve speeds. Do not raise the population cap or manipulate screenshots to disguise low throughput.
+- **Improve path-fitting coverage.** The previously held showcase truck clears its uncontrolled bend in the tested replay, but other incoming bands and imported OSM short links, U-turns and tight curves remain unsupported. Explore movement-aware routing and multi-edge body occupancy/shape-node treatment. The bounded center-tangent cubic fitter is not proof that a real vehicle cannot make a turn. Investigate rear-axle/body-reference kinematics before adding increasingly arbitrary curve trials.
 - **Preserve physical invariants.** Keep bodies on unchanged pavement, maintain stop/crosswalk geometry, prevent accidental red entry, retain pending demand and hold reservations through clearance. Internal terminal destinations are not automatically external exits. Keep the strict 18-case render-pavement oracle and independent terminal tests.
 - **Verify actual footage.** Repeat quiet/busy runs using identical geometry, camera and seed. Include a visible turn and a complete green release. Judge recordings/frame sequences as well as stills; aggregate concurrency counters alone are insufficient.
 
@@ -13,9 +13,9 @@ The current deliverable is a tested Odin/raylib prototype, **not a finished game
 
 ## 2. Implement persistent driver personalities
 
-The user's proposed randomness/chaos controls are **documented but not implemented** in [DRIVER_BEHAVIOR.md](DRIVER_BEHAVIOR.md).
+Opt-in synthetic speed and following-headway distributions are implemented in [DRIVER_BEHAVIOR.md](DRIVER_BEHAVIOR.md). Reaction, amber decisions, filtering, patience and infractions remain unimplemented.
 
-- Start with seeded desired-speed and following-gap distributions, then reaction/amber decisions. Sample persistent traits per driver, independently of appearance and arrival randomness; retain a fully compliant deterministic baseline.
+- Add reaction/amber decisions on top of the seeded desired-speed and following-headway distributions. Keep traits persistent and independent of appearance and arrival randomness; retain a fully compliant deterministic baseline.
 - Implement signal compliance, filtering tendency and bounded patience only when their decision and movement models exist. Decide at meaningful events, not with a random coin flip every frame.
 - Add continuous lateral filtering and merge/gap acceptance before permitting opposing-lane encroachment or other prohibited maneuvers. Source lateral slots are not lane changing.
 - Expose only implemented controls in XML/UI. Add separate attempted, completed and blocked infraction counters. Clearing a light already entered legally must not count as a new violation; crashes need explicit mechanics rather than numerical overlap.
@@ -26,7 +26,7 @@ The user's proposed randomness/chaos controls are **documented but not implement
 
 - Obtain an identified normal quieter/off-peak intersection reference, preferably paired with busy conditions at a comparable location/view. Current references include historical noon **congestion**, not a verified quiet matched pair. Keep source time/context uncertainty visible; never substitute holiday or lockdown emptiness.
 - Acquire permitted motion footage suitable for measuring queue release, speeds, gaps and vehicle proportions. Treat current demand scales and parameter values as synthetic until calibrated; public-camera failures and absent EXIF are documented in [HCM_REFERENCES.md](HCM_REFERENCES.md).
-- Extend OSM processing beyond default widths/speeds: lane/access/turn information, bridge/tunnel levels, disconnected geometry checks and unsupported building multipolygons/courtyards. Import signals only with evidence; do not invent observed timing plans.
+- Extend OSM processing beyond default widths and basic numeric speed tags: lane/access/turn information, conditional speeds, bridge/tunnel levels and unsupported building multipolygons/courtyards. The importer reports weak/strong road components and can audit directed reachability for specified OSM node pairs; neither audit checks vehicle fit, turn restrictions or near-miss junctions. Import signals only with evidence; do not invent observed timing plans.
 - Replace the real-map random first-successor demand model with defensible origins/destinations and time-of-day demand. Resolve short geometry chains without losing actual intersections or hiding unsupported routes.
 
 **Exit criterion:** map assumptions and traffic calibration have traceable provenance; unsupported geometry and unknown timings are explicit, not silently replaced.
@@ -43,7 +43,7 @@ The user's proposed randomness/chaos controls are **documented but not implement
 ## 5. Production readiness
 
 - Profile before raising the 120-agent cap. Current scans, static movement-fit caching and conservative reservations have explicit scaling limits; establish budgets for larger populations and long-running sessions.
-- Add save/load and scenario versioning, reliable replay diagnostics, deployment packaging/asset paths, automated CI and cross-platform build validation. The current local raylib 6.0 bootstrap is Linux-oriented.
+- Add save/load and scenario versioning, reliable replay diagnostics, deployment packaging/asset paths and cross-platform build validation. A pinned GitHub Actions workflow covers Linux x86_64 and macOS arm64 but has not yet been run on GitHub. The local raylib 6.0 bootstrap supports Linux and macOS arm64; other platforms remain unverified.
 - Improve interaction, accessibility and visual readability using real references. Trees/frontage context may help, but do not substitute decoration for correct traffic. Photorealistic facades are not required.
 - Confirm distribution licensing/attribution for data and dependencies. Reference news/stock photos are analysis material, not game assets; do not bundle them without appropriate rights.
 

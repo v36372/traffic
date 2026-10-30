@@ -31,6 +31,7 @@ run-map: build maps
 test: deps maps
 	mkdir -p build
 	$(LOCAL_ODIN) test src/sim -out:build/sim-tests
+	$(LOCAL_ODIN) test src/sim/showcase_test -out:build/showcase-tests
 	$(LOCAL_ODIN) test src/mapdata -out:build/map-tests
 	$(LOCAL_ODIN) test src/integration -out:build/integration-tests
 	$(LOCAL_ODIN) test src/app -out:build/app-tests $(ODINFLAGS)
@@ -47,4 +48,4 @@ capture: build
 	./build/traffic-game --map "$(CAPTURE_MAP)" --smoke-test --screenshot build/visual/current.png
 
 clean:
-	rm -f build/traffic-game build/sim-tests build/map-tests build/integration-tests build/app-tests
+	rm -f build/traffic-game build/sim-tests build/showcase-tests build/map-tests build/integration-tests build/app-tests

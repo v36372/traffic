@@ -14,8 +14,8 @@ load :: proc(path: string) -> (nodes: [dynamic]sim.Node, roads: [dynamic]sim.Roa
 
 load_inner :: proc(path: string) -> (nodes: [dynamic]sim.Node, roads: [dynamic]sim.Road, ok: bool) {
     data, err := os.read_entire_file(path, context.allocator)
-    if err != nil { return }
     defer delete(data)
+    if err != nil { return }
     lines := strings.split_lines(string(data))
     defer delete(lines)
     if len(lines) == 0 || lines[0] != "HCM_MAP,1" { return }

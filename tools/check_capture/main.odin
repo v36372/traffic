@@ -15,10 +15,10 @@ main :: proc() {
         w: sim.World
         sim.init(&w, nodes[:], roads[:], 1)
         delete(nodes); delete(roads)
-        signals, sources, loaded := mapdata.load_objects("build/maps/showcase-objects.csv")
+        signals, sources, drivers, loaded := mapdata.load_objects("build/maps/showcase-objects.csv")
         assert(loaded && len(sources) == 11)
         for &source in sources { source.interval /= scale }
-        assert(sim.configure(&w, signals[:], sources[:]))
+        assert(sim.configure(&w, signals[:], sources[:]) && sim.configure_drivers(&w, drivers))
         delete(signals); delete(sources)
         for _ in 0..<1740 { sim.step(&w, 0.05) }
         for step in 1..=200 {

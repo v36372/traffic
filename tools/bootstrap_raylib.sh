@@ -6,8 +6,17 @@ cd "$(dirname "$0")/.."
 case "$(uname -s):$(uname -m)" in
     Linux:x86_64) libdir=linux ;;
     Linux:aarch64) libdir=linux-arm64 ;;
-    *) echo 'This bootstrap currently supports Linux x86_64/aarch64 only.' >&2; exit 1 ;;
+    Darwin:arm64) libdir=macos ;;
+    *) echo 'This bootstrap supports Linux x86_64/aarch64 and macOS arm64 only.' >&2; exit 1 ;;
 esac
+
+if [[ $libdir == macos ]]; then
+    checksum=(shasum -a 256 -c)
+    cmake_platform=()
+else
+    checksum=(sha256sum -c)
+    cmake_platform=(-DGLFW_BUILD_WAYLAND=OFF -DGLFW_BUILD_X11=ON)
+fi
 
 odin=${ODIN:-odin}
 # Ignore our generated ODIN_ROOT on repeat invocations.
@@ -29,16 +38,16 @@ if [[ ! -f "$archive" ]]; then
     tmp=$(mktemp build/deps/raylib-download.XXXXXX)
     trap 'rm -f "$tmp"' EXIT
     curl --fail --location --retry 2 --output "$tmp" https://codeload.github.com/raysan5/raylib/tar.gz/refs/tags/6.0
-    echo "$sha256  $tmp" | sha256sum --check --status || { echo 'downloaded raylib archive checksum mismatch' >&2; exit 1; }
+    echo "$sha256  $tmp" | "${checksum[@]}" >/dev/null || { echo 'downloaded raylib archive checksum mismatch' >&2; exit 1; }
     mv "$tmp" "$archive"
     trap - EXIT
 fi
-echo "$sha256  $archive" | sha256sum --check --status || { echo 'raylib archive checksum mismatch' >&2; exit 1; }
+echo "$sha256  $archive" | "${checksum[@]}" >/dev/null || { echo 'raylib archive checksum mismatch' >&2; exit 1; }
 
 tar -xzf "$archive" -C build/deps
 cmake -S build/deps/raylib-6.0 -B build/deps/raylib-6.0-build \
     -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DBUILD_EXAMPLES=OFF \
-    -DGLFW_BUILD_WAYLAND=OFF -DGLFW_BUILD_X11=ON
+    "${cmake_platform[@]}"
 cmake --build build/deps/raylib-6.0-build --parallel
 
 mkdir -p "build/vendor/raylib/$libdir" build/vendor/raylib/rlgl
