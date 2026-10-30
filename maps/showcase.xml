@@ -1,0 +1,189 @@
+<map version="1" name="Lantern Quarter">
+  <!-- Authored neighborhood: six perimeter blocks around a mixed-use cross corridor. -->
+  <node id="n00" x="-135" y="-120"/>
+  <node id="n10" x="-45" y="-120"/>
+  <node id="n20" x="45" y="-120"/>
+  <node id="n30" x="135" y="-120"/>
+  <node id="n01" x="-135" y="0"/>
+  <node id="n11" x="-45" y="0"/>
+  <node id="n21" x="45" y="0"/>
+  <node id="n31" x="135" y="0"/>
+  <node id="n02" x="-135" y="120"/>
+  <node id="n12" x="-45" y="120"/>
+  <node id="n22" x="45" y="120"/>
+  <node id="n32" x="135" y="120"/>
+
+  <!-- Width is per direction: 11 m central arterial, 7 m side streets.
+       Authored proportions for mixed bike/car queues, not surveyed measurements. -->
+  <road id="h00" from="n00" to="n10" width="3.5" speed="8" direction="twoway"/>
+  <road id="h10" from="n10" to="n20" width="3.5" speed="8" direction="twoway"/>
+  <road id="h20" from="n30" to="n20" width="3.5" speed="8" direction="twoway"/>
+  <road id="h01" from="n01" to="n11" width="5.5" speed="8" direction="twoway"/>
+  <road id="h11" from="n11" to="n21" width="5.5" speed="8" direction="twoway"/>
+  <road id="h21" from="n31" to="n21" width="5.5" speed="8" direction="twoway"/>
+  <road id="h02" from="n02" to="n12" width="3.5" speed="8" direction="twoway"/>
+  <road id="h12" from="n12" to="n22" width="3.5" speed="8" direction="twoway"/>
+  <road id="h22" from="n32" to="n22" width="3.5" speed="8" direction="twoway"/>
+  <road id="v00" from="n00" to="n01" width="3.5" speed="8" direction="twoway"/>
+  <road id="v01" from="n02" to="n01" width="3.5" speed="8" direction="twoway"/>
+  <road id="v10" from="n10" to="n11" width="3.5" speed="8" direction="twoway"/>
+  <road id="v11" from="n12" to="n11" width="3.5" speed="8" direction="twoway"/>
+  <road id="v20" from="n20" to="n21" width="3.5" speed="8" direction="twoway"/>
+  <road id="v21" from="n22" to="n21" width="3.5" speed="8" direction="twoway"/>
+  <road id="v30" from="n30" to="n31" width="3.5" speed="8" direction="twoway"/>
+  <road id="v31" from="n32" to="n31" width="3.5" speed="8" direction="twoway"/>
+
+  <!-- Exclusive approaches, staggered along the central corridor. -->
+  <signal id="west-cross" node="n11" green="8" amber="2" clearance="1" offset="0"/>
+  <signal id="east-cross" node="n21" green="8" amber="2" clearance="1" offset="17"/>
+  <signal id="north-gate" node="n12" green="8" amber="2" clearance="1" offset="7"/>
+
+  <!-- Scheduled cross-neighborhood journeys; motorcycles dominate arrival rate. -->
+  <spawn id="moto-west" road="h01" destination="n31" interval="5" kind="motorcycle"/>
+  <!-- Exercise a visible left turn at the focused junction, not only straight trips. -->
+  <spawn id="moto-west-turn" road="h01" destination="n12" interval="8" kind="motorcycle"/>
+  <spawn id="moto-east" road="h21" destination="n01" interval="6" kind="motorcycle"/>
+  <spawn id="moto-south" road="v10" destination="n12" interval="6.5" kind="motorcycle"/>
+  <spawn id="moto-north" road="v21" destination="n20" interval="6" kind="motorcycle"/>
+  <spawn id="moto-northwest" road="h02" destination="n30" interval="7" kind="motorcycle"/>
+  <spawn id="car-southwest" road="h00" destination="n32" interval="15" kind="car"/>
+  <spawn id="bus-northeast" road="h22" destination="n00" interval="24" kind="bus"/>
+  <spawn id="bike-south" road="v20" destination="n12" interval="15" kind="bicycle"/>
+  <spawn id="truck-northwest" road="v01" destination="n30" interval="25" kind="truck"/>
+  <spawn id="tricycle-east" road="v31" destination="n00" interval="20" kind="tricycle"/>
+
+  <!-- canal: street-facing shopfronts frame a protected block interior. -->
+  <building id="canal-south-1-1" kind="lowrise" height="9"><vertex x="-125" y="-111"/><vertex x="-119" y="-111"/><vertex x="-119" y="-98"/><vertex x="-125" y="-98"/></building>
+  <building id="canal-south-1-2" kind="lowrise" height="12"><vertex x="-118.5" y="-111"/><vertex x="-112.5" y="-111"/><vertex x="-112.5" y="-98"/><vertex x="-118.5" y="-98"/></building>
+  <building id="canal-south-1-3" kind="lowrise" height="15"><vertex x="-112" y="-111"/><vertex x="-106" y="-111"/><vertex x="-106" y="-98"/><vertex x="-112" y="-98"/></building>
+  <building id="canal-north-1-1" kind="lowrise" height="16"><vertex x="-125" y="-22"/><vertex x="-119" y="-22"/><vertex x="-119" y="-9"/><vertex x="-125" y="-9"/></building>
+  <building id="canal-north-1-2" kind="lowrise" height="9"><vertex x="-118.5" y="-22"/><vertex x="-112.5" y="-22"/><vertex x="-112.5" y="-9"/><vertex x="-118.5" y="-9"/></building>
+  <building id="canal-north-1-3" kind="lowrise" height="12"><vertex x="-112" y="-22"/><vertex x="-106" y="-22"/><vertex x="-106" y="-9"/><vertex x="-112" y="-9"/></building>
+  <building id="canal-south-2-1" kind="lowrise" height="13"><vertex x="-102" y="-111"/><vertex x="-96" y="-111"/><vertex x="-96" y="-98"/><vertex x="-102" y="-98"/></building>
+  <building id="canal-south-2-2" kind="lowrise" height="16"><vertex x="-95.5" y="-111"/><vertex x="-89.5" y="-111"/><vertex x="-89.5" y="-98"/><vertex x="-95.5" y="-98"/></building>
+  <building id="canal-south-2-3" kind="lowrise" height="9"><vertex x="-89" y="-111"/><vertex x="-83" y="-111"/><vertex x="-83" y="-98"/><vertex x="-89" y="-98"/></building>
+  <building id="canal-north-2-1" kind="lowrise" height="10"><vertex x="-102" y="-22"/><vertex x="-96" y="-22"/><vertex x="-96" y="-9"/><vertex x="-102" y="-9"/></building>
+  <building id="canal-north-2-2" kind="lowrise" height="13"><vertex x="-95.5" y="-22"/><vertex x="-89.5" y="-22"/><vertex x="-89.5" y="-9"/><vertex x="-95.5" y="-9"/></building>
+  <building id="canal-north-2-3" kind="lowrise" height="16"><vertex x="-89" y="-22"/><vertex x="-83" y="-22"/><vertex x="-83" y="-9"/><vertex x="-89" y="-9"/></building>
+  <building id="canal-south-3-1" kind="lowrise" height="17"><vertex x="-79" y="-111"/><vertex x="-73" y="-111"/><vertex x="-73" y="-98"/><vertex x="-79" y="-98"/></building>
+  <building id="canal-south-3-2" kind="lowrise" height="10"><vertex x="-72.5" y="-111"/><vertex x="-66.5" y="-111"/><vertex x="-66.5" y="-98"/><vertex x="-72.5" y="-98"/></building>
+  <building id="canal-south-3-3" kind="lowrise" height="13"><vertex x="-66" y="-111"/><vertex x="-60" y="-111"/><vertex x="-60" y="-98"/><vertex x="-66" y="-98"/></building>
+  <building id="canal-north-3-1" kind="lowrise" height="14"><vertex x="-79" y="-22"/><vertex x="-73" y="-22"/><vertex x="-73" y="-9"/><vertex x="-79" y="-9"/></building>
+  <building id="canal-north-3-2" kind="lowrise" height="17"><vertex x="-72.5" y="-22"/><vertex x="-66.5" y="-22"/><vertex x="-66.5" y="-9"/><vertex x="-72.5" y="-9"/></building>
+  <building id="canal-north-3-3" kind="lowrise" height="10"><vertex x="-66" y="-22"/><vertex x="-60" y="-22"/><vertex x="-60" y="-9"/><vertex x="-66" y="-9"/></building>
+  <building id="canal-west" kind="apartment" height="24"><vertex x="-126" y="-85"/><vertex x="-110" y="-85"/><vertex x="-110" y="-68"/><vertex x="-116" y="-68"/><vertex x="-116" y="-36"/><vertex x="-126" y="-36"/></building>
+  <building id="canal-east" kind="apartment" height="21"><vertex x="-70" y="-85"/><vertex x="-54" y="-85"/><vertex x="-54" y="-36"/><vertex x="-70" y="-36"/></building>
+  <building id="canal-workshop" kind="lowrise" height="9"><vertex x="-97" y="-67"/><vertex x="-83" y="-67"/><vertex x="-83" y="-55"/><vertex x="-97" y="-55"/></building>
+
+  <!-- market: street-facing shopfronts frame a protected block interior. -->
+  <building id="market-south-1-1" kind="lowrise" height="11"><vertex x="-35" y="-111"/><vertex x="-29" y="-111"/><vertex x="-29" y="-98"/><vertex x="-35" y="-98"/></building>
+  <building id="market-south-1-2" kind="lowrise" height="14"><vertex x="-28.5" y="-111"/><vertex x="-22.5" y="-111"/><vertex x="-22.5" y="-98"/><vertex x="-28.5" y="-98"/></building>
+  <building id="market-south-1-3" kind="lowrise" height="17"><vertex x="-22" y="-111"/><vertex x="-16" y="-111"/><vertex x="-16" y="-98"/><vertex x="-22" y="-98"/></building>
+  <building id="market-north-1-1" kind="lowrise" height="18"><vertex x="-35" y="-22"/><vertex x="-29" y="-22"/><vertex x="-29" y="-9"/><vertex x="-35" y="-9"/></building>
+  <building id="market-north-1-2" kind="lowrise" height="11"><vertex x="-28.5" y="-22"/><vertex x="-22.5" y="-22"/><vertex x="-22.5" y="-9"/><vertex x="-28.5" y="-9"/></building>
+  <building id="market-north-1-3" kind="lowrise" height="14"><vertex x="-22" y="-22"/><vertex x="-16" y="-22"/><vertex x="-16" y="-9"/><vertex x="-22" y="-9"/></building>
+  <building id="market-south-2-1" kind="lowrise" height="15"><vertex x="-12" y="-111"/><vertex x="-6" y="-111"/><vertex x="-6" y="-98"/><vertex x="-12" y="-98"/></building>
+  <building id="market-south-2-2" kind="lowrise" height="18"><vertex x="-5.5" y="-111"/><vertex x="0.5" y="-111"/><vertex x="0.5" y="-98"/><vertex x="-5.5" y="-98"/></building>
+  <building id="market-south-2-3" kind="lowrise" height="11"><vertex x="1" y="-111"/><vertex x="7" y="-111"/><vertex x="7" y="-98"/><vertex x="1" y="-98"/></building>
+  <building id="market-north-2-1" kind="lowrise" height="12"><vertex x="-12" y="-22"/><vertex x="-6" y="-22"/><vertex x="-6" y="-9"/><vertex x="-12" y="-9"/></building>
+  <building id="market-north-2-2" kind="lowrise" height="15"><vertex x="-5.5" y="-22"/><vertex x="0.5" y="-22"/><vertex x="0.5" y="-9"/><vertex x="-5.5" y="-9"/></building>
+  <building id="market-north-2-3" kind="lowrise" height="18"><vertex x="1" y="-22"/><vertex x="7" y="-22"/><vertex x="7" y="-9"/><vertex x="1" y="-9"/></building>
+  <building id="market-south-3-1" kind="lowrise" height="9"><vertex x="11" y="-111"/><vertex x="17" y="-111"/><vertex x="17" y="-98"/><vertex x="11" y="-98"/></building>
+  <building id="market-south-3-2" kind="lowrise" height="12"><vertex x="17.5" y="-111"/><vertex x="23.5" y="-111"/><vertex x="23.5" y="-98"/><vertex x="17.5" y="-98"/></building>
+  <building id="market-south-3-3" kind="lowrise" height="15"><vertex x="24" y="-111"/><vertex x="30" y="-111"/><vertex x="30" y="-98"/><vertex x="24" y="-98"/></building>
+  <building id="market-north-3-1" kind="lowrise" height="16"><vertex x="11" y="-22"/><vertex x="17" y="-22"/><vertex x="17" y="-9"/><vertex x="11" y="-9"/></building>
+  <building id="market-north-3-2" kind="lowrise" height="9"><vertex x="17.5" y="-22"/><vertex x="23.5" y="-22"/><vertex x="23.5" y="-9"/><vertex x="17.5" y="-9"/></building>
+  <building id="market-north-3-3" kind="lowrise" height="12"><vertex x="24" y="-22"/><vertex x="30" y="-22"/><vertex x="30" y="-9"/><vertex x="24" y="-9"/></building>
+  <building id="market-hall" kind="landmark" height="16"><vertex x="-22" y="-81"/><vertex x="22" y="-81"/><vertex x="22" y="-39"/><vertex x="-22" y="-39"/></building>
+
+  <!-- civic: street-facing shopfronts frame a protected block interior. -->
+  <building id="civic-south-1-1" kind="lowrise" height="13"><vertex x="55" y="-111"/><vertex x="61" y="-111"/><vertex x="61" y="-98"/><vertex x="55" y="-98"/></building>
+  <building id="civic-south-1-2" kind="lowrise" height="16"><vertex x="61.5" y="-111"/><vertex x="67.5" y="-111"/><vertex x="67.5" y="-98"/><vertex x="61.5" y="-98"/></building>
+  <building id="civic-south-1-3" kind="lowrise" height="9"><vertex x="68" y="-111"/><vertex x="74" y="-111"/><vertex x="74" y="-98"/><vertex x="68" y="-98"/></building>
+  <building id="civic-north-1-1" kind="lowrise" height="10"><vertex x="55" y="-22"/><vertex x="61" y="-22"/><vertex x="61" y="-9"/><vertex x="55" y="-9"/></building>
+  <building id="civic-north-1-2" kind="lowrise" height="13"><vertex x="61.5" y="-22"/><vertex x="67.5" y="-22"/><vertex x="67.5" y="-9"/><vertex x="61.5" y="-9"/></building>
+  <building id="civic-north-1-3" kind="lowrise" height="16"><vertex x="68" y="-22"/><vertex x="74" y="-22"/><vertex x="74" y="-9"/><vertex x="68" y="-9"/></building>
+  <building id="civic-south-2-1" kind="lowrise" height="17"><vertex x="78" y="-111"/><vertex x="84" y="-111"/><vertex x="84" y="-98"/><vertex x="78" y="-98"/></building>
+  <building id="civic-south-2-2" kind="lowrise" height="10"><vertex x="84.5" y="-111"/><vertex x="90.5" y="-111"/><vertex x="90.5" y="-98"/><vertex x="84.5" y="-98"/></building>
+  <building id="civic-south-2-3" kind="lowrise" height="13"><vertex x="91" y="-111"/><vertex x="97" y="-111"/><vertex x="97" y="-98"/><vertex x="91" y="-98"/></building>
+  <building id="civic-north-2-1" kind="lowrise" height="14"><vertex x="78" y="-22"/><vertex x="84" y="-22"/><vertex x="84" y="-9"/><vertex x="78" y="-9"/></building>
+  <building id="civic-north-2-2" kind="lowrise" height="17"><vertex x="84.5" y="-22"/><vertex x="90.5" y="-22"/><vertex x="90.5" y="-9"/><vertex x="84.5" y="-9"/></building>
+  <building id="civic-north-2-3" kind="lowrise" height="10"><vertex x="91" y="-22"/><vertex x="97" y="-22"/><vertex x="97" y="-9"/><vertex x="91" y="-9"/></building>
+  <building id="civic-south-3-1" kind="lowrise" height="11"><vertex x="101" y="-111"/><vertex x="107" y="-111"/><vertex x="107" y="-98"/><vertex x="101" y="-98"/></building>
+  <building id="civic-south-3-2" kind="lowrise" height="14"><vertex x="107.5" y="-111"/><vertex x="113.5" y="-111"/><vertex x="113.5" y="-98"/><vertex x="107.5" y="-98"/></building>
+  <building id="civic-south-3-3" kind="lowrise" height="17"><vertex x="114" y="-111"/><vertex x="120" y="-111"/><vertex x="120" y="-98"/><vertex x="114" y="-98"/></building>
+  <building id="civic-north-3-1" kind="lowrise" height="18"><vertex x="101" y="-22"/><vertex x="107" y="-22"/><vertex x="107" y="-9"/><vertex x="101" y="-9"/></building>
+  <building id="civic-north-3-2" kind="lowrise" height="11"><vertex x="107.5" y="-22"/><vertex x="113.5" y="-22"/><vertex x="113.5" y="-9"/><vertex x="107.5" y="-9"/></building>
+  <building id="civic-north-3-3" kind="lowrise" height="14"><vertex x="114" y="-22"/><vertex x="120" y="-22"/><vertex x="120" y="-9"/><vertex x="114" y="-9"/></building>
+  <building id="civic-west" kind="office" height="58"><vertex x="54" y="-85"/><vertex x="70" y="-85"/><vertex x="70" y="-36"/><vertex x="54" y="-36"/></building>
+  <building id="civic-east" kind="apartment" height="21"><vertex x="110" y="-85"/><vertex x="126" y="-85"/><vertex x="126" y="-36"/><vertex x="110" y="-36"/></building>
+  <building id="civic-service" kind="lowrise" height="10"><vertex x="83" y="-67"/><vertex x="97" y="-67"/><vertex x="97" y="-55"/><vertex x="83" y="-55"/></building>
+
+  <!-- garden: street-facing shopfronts frame a protected block interior. -->
+  <building id="garden-south-1-1" kind="lowrise" height="15"><vertex x="-125" y="9"/><vertex x="-119" y="9"/><vertex x="-119" y="22"/><vertex x="-125" y="22"/></building>
+  <building id="garden-south-1-2" kind="lowrise" height="18"><vertex x="-118.5" y="9"/><vertex x="-112.5" y="9"/><vertex x="-112.5" y="22"/><vertex x="-118.5" y="22"/></building>
+  <building id="garden-south-1-3" kind="lowrise" height="11"><vertex x="-112" y="9"/><vertex x="-106" y="9"/><vertex x="-106" y="22"/><vertex x="-112" y="22"/></building>
+  <building id="garden-north-1-1" kind="lowrise" height="12"><vertex x="-125" y="98"/><vertex x="-119" y="98"/><vertex x="-119" y="111"/><vertex x="-125" y="111"/></building>
+  <building id="garden-north-1-2" kind="lowrise" height="15"><vertex x="-118.5" y="98"/><vertex x="-112.5" y="98"/><vertex x="-112.5" y="111"/><vertex x="-118.5" y="111"/></building>
+  <building id="garden-north-1-3" kind="lowrise" height="18"><vertex x="-112" y="98"/><vertex x="-106" y="98"/><vertex x="-106" y="111"/><vertex x="-112" y="111"/></building>
+  <building id="garden-south-2-1" kind="lowrise" height="9"><vertex x="-102" y="9"/><vertex x="-96" y="9"/><vertex x="-96" y="22"/><vertex x="-102" y="22"/></building>
+  <building id="garden-south-2-2" kind="lowrise" height="12"><vertex x="-95.5" y="9"/><vertex x="-89.5" y="9"/><vertex x="-89.5" y="22"/><vertex x="-95.5" y="22"/></building>
+  <building id="garden-south-2-3" kind="lowrise" height="15"><vertex x="-89" y="9"/><vertex x="-83" y="9"/><vertex x="-83" y="22"/><vertex x="-89" y="22"/></building>
+  <building id="garden-north-2-1" kind="lowrise" height="16"><vertex x="-102" y="98"/><vertex x="-96" y="98"/><vertex x="-96" y="111"/><vertex x="-102" y="111"/></building>
+  <building id="garden-north-2-2" kind="lowrise" height="9"><vertex x="-95.5" y="98"/><vertex x="-89.5" y="98"/><vertex x="-89.5" y="111"/><vertex x="-95.5" y="111"/></building>
+  <building id="garden-north-2-3" kind="lowrise" height="12"><vertex x="-89" y="98"/><vertex x="-83" y="98"/><vertex x="-83" y="111"/><vertex x="-89" y="111"/></building>
+  <building id="garden-south-3-1" kind="lowrise" height="13"><vertex x="-79" y="9"/><vertex x="-73" y="9"/><vertex x="-73" y="22"/><vertex x="-79" y="22"/></building>
+  <building id="garden-south-3-2" kind="lowrise" height="16"><vertex x="-72.5" y="9"/><vertex x="-66.5" y="9"/><vertex x="-66.5" y="22"/><vertex x="-72.5" y="22"/></building>
+  <building id="garden-south-3-3" kind="lowrise" height="9"><vertex x="-66" y="9"/><vertex x="-60" y="9"/><vertex x="-60" y="22"/><vertex x="-66" y="22"/></building>
+  <building id="garden-north-3-1" kind="lowrise" height="10"><vertex x="-79" y="98"/><vertex x="-73" y="98"/><vertex x="-73" y="111"/><vertex x="-79" y="111"/></building>
+  <building id="garden-north-3-2" kind="lowrise" height="13"><vertex x="-72.5" y="98"/><vertex x="-66.5" y="98"/><vertex x="-66.5" y="111"/><vertex x="-72.5" y="111"/></building>
+  <building id="garden-north-3-3" kind="lowrise" height="16"><vertex x="-66" y="98"/><vertex x="-60" y="98"/><vertex x="-60" y="111"/><vertex x="-66" y="111"/></building>
+  <building id="garden-west" kind="apartment" height="24"><vertex x="-126" y="35"/><vertex x="-110" y="35"/><vertex x="-110" y="84"/><vertex x="-126" y="84"/></building>
+  <building id="garden-east" kind="office" height="64"><vertex x="-70" y="35"/><vertex x="-54" y="35"/><vertex x="-54" y="84"/><vertex x="-70" y="84"/></building>
+  <building id="garden-pavilion" kind="lowrise" height="9"><vertex x="-97" y="53"/><vertex x="-83" y="53"/><vertex x="-83" y="65"/><vertex x="-97" y="65"/></building>
+
+  <!-- terrace: street-facing shopfronts frame a protected block interior. -->
+  <building id="terrace-south-1-1" kind="lowrise" height="17"><vertex x="-35" y="9"/><vertex x="-29" y="9"/><vertex x="-29" y="22"/><vertex x="-35" y="22"/></building>
+  <building id="terrace-south-1-2" kind="lowrise" height="10"><vertex x="-28.5" y="9"/><vertex x="-22.5" y="9"/><vertex x="-22.5" y="22"/><vertex x="-28.5" y="22"/></building>
+  <building id="terrace-south-1-3" kind="lowrise" height="13"><vertex x="-22" y="9"/><vertex x="-16" y="9"/><vertex x="-16" y="22"/><vertex x="-22" y="22"/></building>
+  <building id="terrace-north-1-1" kind="lowrise" height="14"><vertex x="-35" y="98"/><vertex x="-29" y="98"/><vertex x="-29" y="111"/><vertex x="-35" y="111"/></building>
+  <building id="terrace-north-1-2" kind="lowrise" height="17"><vertex x="-28.5" y="98"/><vertex x="-22.5" y="98"/><vertex x="-22.5" y="111"/><vertex x="-28.5" y="111"/></building>
+  <building id="terrace-north-1-3" kind="lowrise" height="10"><vertex x="-22" y="98"/><vertex x="-16" y="98"/><vertex x="-16" y="111"/><vertex x="-22" y="111"/></building>
+  <building id="terrace-south-2-1" kind="lowrise" height="11"><vertex x="-12" y="9"/><vertex x="-6" y="9"/><vertex x="-6" y="22"/><vertex x="-12" y="22"/></building>
+  <building id="terrace-south-2-2" kind="lowrise" height="14"><vertex x="-5.5" y="9"/><vertex x="0.5" y="9"/><vertex x="0.5" y="22"/><vertex x="-5.5" y="22"/></building>
+  <building id="terrace-south-2-3" kind="lowrise" height="17"><vertex x="1" y="9"/><vertex x="7" y="9"/><vertex x="7" y="22"/><vertex x="1" y="22"/></building>
+  <building id="terrace-north-2-1" kind="lowrise" height="18"><vertex x="-12" y="98"/><vertex x="-6" y="98"/><vertex x="-6" y="111"/><vertex x="-12" y="111"/></building>
+  <building id="terrace-north-2-2" kind="lowrise" height="11"><vertex x="-5.5" y="98"/><vertex x="0.5" y="98"/><vertex x="0.5" y="111"/><vertex x="-5.5" y="111"/></building>
+  <building id="terrace-north-2-3" kind="lowrise" height="14"><vertex x="1" y="98"/><vertex x="7" y="98"/><vertex x="7" y="111"/><vertex x="1" y="111"/></building>
+  <building id="terrace-south-3-1" kind="lowrise" height="15"><vertex x="11" y="9"/><vertex x="17" y="9"/><vertex x="17" y="22"/><vertex x="11" y="22"/></building>
+  <building id="terrace-south-3-2" kind="lowrise" height="18"><vertex x="17.5" y="9"/><vertex x="23.5" y="9"/><vertex x="23.5" y="22"/><vertex x="17.5" y="22"/></building>
+  <building id="terrace-south-3-3" kind="lowrise" height="11"><vertex x="24" y="9"/><vertex x="30" y="9"/><vertex x="30" y="22"/><vertex x="24" y="22"/></building>
+  <building id="terrace-north-3-1" kind="lowrise" height="12"><vertex x="11" y="98"/><vertex x="17" y="98"/><vertex x="17" y="111"/><vertex x="11" y="111"/></building>
+  <building id="terrace-north-3-2" kind="lowrise" height="15"><vertex x="17.5" y="98"/><vertex x="23.5" y="98"/><vertex x="23.5" y="111"/><vertex x="17.5" y="111"/></building>
+  <building id="terrace-north-3-3" kind="lowrise" height="18"><vertex x="24" y="98"/><vertex x="30" y="98"/><vertex x="30" y="111"/><vertex x="24" y="111"/></building>
+  <building id="terrace-west" kind="apartment" height="24"><vertex x="-36" y="35"/><vertex x="-20" y="35"/><vertex x="-20" y="84"/><vertex x="-36" y="84"/></building>
+  <building id="terrace-east" kind="apartment" height="21"><vertex x="26" y="35"/><vertex x="36" y="35"/><vertex x="36" y="84"/><vertex x="20" y="84"/><vertex x="20" y="67"/><vertex x="26" y="67"/></building>
+  <building id="terrace-studio" kind="lowrise" height="12"><vertex x="-7" y="53"/><vertex x="7" y="53"/><vertex x="7" y="65"/><vertex x="-7" y="65"/></building>
+
+  <!-- exchange: street-facing shopfronts frame a protected block interior. -->
+  <building id="exchange-south-1-1" kind="lowrise" height="9"><vertex x="55" y="9"/><vertex x="61" y="9"/><vertex x="61" y="22"/><vertex x="55" y="22"/></building>
+  <building id="exchange-south-1-2" kind="lowrise" height="12"><vertex x="61.5" y="9"/><vertex x="67.5" y="9"/><vertex x="67.5" y="22"/><vertex x="61.5" y="22"/></building>
+  <building id="exchange-south-1-3" kind="lowrise" height="15"><vertex x="68" y="9"/><vertex x="74" y="9"/><vertex x="74" y="22"/><vertex x="68" y="22"/></building>
+  <building id="exchange-north-1-1" kind="lowrise" height="16"><vertex x="55" y="98"/><vertex x="61" y="98"/><vertex x="61" y="111"/><vertex x="55" y="111"/></building>
+  <building id="exchange-north-1-2" kind="lowrise" height="9"><vertex x="61.5" y="98"/><vertex x="67.5" y="98"/><vertex x="67.5" y="111"/><vertex x="61.5" y="111"/></building>
+  <building id="exchange-north-1-3" kind="lowrise" height="12"><vertex x="68" y="98"/><vertex x="74" y="98"/><vertex x="74" y="111"/><vertex x="68" y="111"/></building>
+  <building id="exchange-south-2-1" kind="lowrise" height="13"><vertex x="78" y="9"/><vertex x="84" y="9"/><vertex x="84" y="22"/><vertex x="78" y="22"/></building>
+  <building id="exchange-south-2-2" kind="lowrise" height="16"><vertex x="84.5" y="9"/><vertex x="90.5" y="9"/><vertex x="90.5" y="22"/><vertex x="84.5" y="22"/></building>
+  <building id="exchange-south-2-3" kind="lowrise" height="9"><vertex x="91" y="9"/><vertex x="97" y="9"/><vertex x="97" y="22"/><vertex x="91" y="22"/></building>
+  <building id="exchange-north-2-1" kind="lowrise" height="10"><vertex x="78" y="98"/><vertex x="84" y="98"/><vertex x="84" y="111"/><vertex x="78" y="111"/></building>
+  <building id="exchange-north-2-2" kind="lowrise" height="13"><vertex x="84.5" y="98"/><vertex x="90.5" y="98"/><vertex x="90.5" y="111"/><vertex x="84.5" y="111"/></building>
+  <building id="exchange-north-2-3" kind="lowrise" height="16"><vertex x="91" y="98"/><vertex x="97" y="98"/><vertex x="97" y="111"/><vertex x="91" y="111"/></building>
+  <building id="exchange-south-3-1" kind="lowrise" height="17"><vertex x="101" y="9"/><vertex x="107" y="9"/><vertex x="107" y="22"/><vertex x="101" y="22"/></building>
+  <building id="exchange-south-3-2" kind="lowrise" height="10"><vertex x="107.5" y="9"/><vertex x="113.5" y="9"/><vertex x="113.5" y="22"/><vertex x="107.5" y="22"/></building>
+  <building id="exchange-south-3-3" kind="lowrise" height="13"><vertex x="114" y="9"/><vertex x="120" y="9"/><vertex x="120" y="22"/><vertex x="114" y="22"/></building>
+  <building id="exchange-north-3-1" kind="lowrise" height="14"><vertex x="101" y="98"/><vertex x="107" y="98"/><vertex x="107" y="111"/><vertex x="101" y="111"/></building>
+  <building id="exchange-north-3-2" kind="lowrise" height="17"><vertex x="107.5" y="98"/><vertex x="113.5" y="98"/><vertex x="113.5" y="111"/><vertex x="107.5" y="111"/></building>
+  <building id="exchange-north-3-3" kind="lowrise" height="10"><vertex x="114" y="98"/><vertex x="120" y="98"/><vertex x="120" y="111"/><vertex x="114" y="111"/></building>
+  <building id="exchange-west" kind="office" height="72"><vertex x="54" y="35"/><vertex x="70" y="35"/><vertex x="70" y="84"/><vertex x="54" y="84"/></building>
+  <building id="exchange-east" kind="apartment" height="21"><vertex x="110" y="35"/><vertex x="126" y="35"/><vertex x="126" y="84"/><vertex x="110" y="84"/></building>
+</map>

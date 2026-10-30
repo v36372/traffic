@@ -1,0 +1,17 @@
+<map version="1" name="Intersection">
+  <node id="west" x="-100" y="0"/>
+  <node id="center" x="0" y="0"/>
+  <node id="east" x="100" y="0"/>
+  <node id="north" x="0" y="100"/>
+  <node id="south" x="0" y="-100"/>
+  <road id="west-in" from="west" to="center" width="3.5" speed="10" direction="twoway"/>
+  <road from="center" to="east" width="3.5" speed="10" direction="twoway"/>
+  <road id="south-in" from="south" to="center" width="3.5" speed="10" direction="twoway"/>
+  <road from="center" to="north" width="3.5" speed="10" direction="twoway"/>
+  <signal id="junction-light" node="center" green="8" amber="2" clearance="1"/>
+  <spawn id="west-commuters" road="west-in" destination="east" interval="2" kind="motorcycle"/>
+  <spawn id="south-commuters" road="south-in" destination="north" interval="4" kind="car"/>
+  <building id="shop" kind="lowrise" height="8">
+    <vertex x="20" y="20"/><vertex x="65" y="20"/><vertex x="65" y="55"/><vertex x="20" y="55"/>
+  </building>
+</map>

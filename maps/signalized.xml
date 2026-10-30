@@ -1,0 +1,14 @@
+<map version="1" name="Signalized crossroads">
+  <node id="west" x="-120" y="0"/>
+  <node id="center" x="0" y="0"/>
+  <node id="east" x="120" y="0"/>
+  <node id="south" x="0" y="-100"/>
+  <node id="north" x="0" y="100"/>
+  <road id="west-in" from="west" to="center" width="4" speed="10" direction="oneway"/>
+  <road from="center" to="east" width="4" speed="10" direction="oneway"/>
+  <road id="south-in" from="south" to="center" width="4" speed="10" direction="oneway"/>
+  <road from="center" to="north" width="4" speed="10" direction="oneway"/>
+  <signal id="crossroads" node="center" green="10" amber="2" clearance="1" offset="0"/>
+  <spawn id="eastbound" road="west-in" destination="east" interval="3" kind="bus"/>
+  <spawn id="northbound" road="south-in" destination="north" interval="2" kind="bicycle"/>
+</map>

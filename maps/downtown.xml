@@ -1,0 +1,17 @@
+<map version="1" name="Downtown">
+  <node id="nw" x="-80" y="80"/><node id="n" x="0" y="80"/><node id="ne" x="80" y="80"/>
+  <node id="w" x="-80" y="0"/><node id="c" x="0" y="0"/><node id="e" x="80" y="0"/>
+  <node id="sw" x="-80" y="-80"/><node id="s" x="0" y="-80"/><node id="se" x="80" y="-80"/>
+  <road from="nw" to="n" width="3.5" speed="8" direction="oneway"/><road from="n" to="ne" width="3.5" speed="8" direction="oneway"/>
+  <road from="ne" to="e" width="3.5" speed="8" direction="oneway"/><road from="e" to="se" width="3.5" speed="8" direction="oneway"/>
+  <road from="se" to="s" width="3.5" speed="8" direction="oneway"/><road from="s" to="sw" width="3.5" speed="8" direction="oneway"/>
+  <road from="sw" to="w" width="3.5" speed="8" direction="oneway"/><road from="w" to="nw" width="3.5" speed="8" direction="oneway"/>
+  <road from="w" to="c" width="3.5" speed="8" direction="twoway"/><road from="c" to="e" width="3.5" speed="8" direction="twoway"/>
+  <road from="s" to="c" width="3.5" speed="8" direction="twoway"/><road from="c" to="n" width="3.5" speed="8" direction="twoway"/>
+  <building id="tower" kind="office" height="60">
+    <vertex x="15" y="20"/><vertex x="25" y="12"/><vertex x="55" y="12"/><vertex x="65" y="20"/><vertex x="65" y="55"/><vertex x="15" y="55"/>
+  </building>
+  <building id="hall" kind="landmark" height="18">
+    <vertex x="-65" y="-65"/><vertex x="-15" y="-65"/><vertex x="-15" y="-20"/><vertex x="-40" y="-10"/><vertex x="-65" y="-20"/>
+  </building>
+</map>

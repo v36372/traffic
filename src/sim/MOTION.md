@@ -1,0 +1,76 @@
+# Continuous motion, straight batching and authored crossings
+
+Run from the repository root:
+
+```sh
+make test && make check
+odin run src/sim/check_maps -out:/tmp/traffic-motion-maps
+```
+
+## Authoritative APIs
+
+`vehicle_pose(w, v) -> (position, forward: Vec2)` owns link and connector poses in east/north coordinates. Forward is unit length. During motion, `road/distance/lateral` still identify the incoming link; renderers must use the pose, not rebuild/interpolate it. `Vehicle.motion.active/node/exit/progress/length` expose commitment and reservation. `exit == -1` is a reserved terminal trip. `Vehicle.id: u64` is `spawned+1` at successful admission and resets with the world; no art RNG touches physics.
+
+`crossing_band(w, road) -> (near, far, center_lateral, width: f32, ok: bool)` returns a 4m longitudinal band spanning the **full directed plus reciprocal carriageway union**, including unequal widths. Distances follow the incoming source-to-node axis. `center_lateral` is relative to the **unshifted axis**, so do not add `road_offset` again. A 0.45m lateral envelope covers the app's 0.4m curb landing plus clearance. The far edge clears the full-span junction hull/incident strip overlap by 1m, including skew approaches. The stop bar is another 1m upstream of the near edge. Short/overlapping authored layouts return `ok=false`; there is no fallback paint.
+
+Crossing geometry is operational **only on controlled approaches rendered by the app**. The band query can describe hypothetical geometry, but `stop_line_distance` retains the exact legacy setback for uncontrolled roads/OSM shape edges. `stop_line_for_signals` and `crossing_band_for_signals` validate the explicit proposed signal plan before `configure` changes the live plan/caches. Failed configure leaves the previous configuration intact.
+
+`turn_start_distance` describes the mouth, independently of the upstream STOP line. `junction_clearance_distance` describes rear-clear outgoing geometry, independently of where steering ends. `junction_polygon(w, node, extra=0)` is the single simulation/render convex-hull authority: caller owns/deletes its east/north CCW points; total strip-width addition is 0 for asphalt, 0.4 curb, 4.4 sidewalk. The app's original fixed hull areas and independent cached-triangle body oracle remain unchanged.
+
+## Executed motion and reservations
+
+- Reservation is acquired at the stop bar **before** the crossing. A straight lead carries the center through the entire band; only afterward does the cubic turn begin at/after the mouth. The lead, 64-segment arc-length cubic and optional straight tail share one metre budget and matching boundary tangents. The tail can finish steering before a narrow receiving strip, while retaining the node/exit reservation until the rear clears the incident hull/strips. Terminal trips also reserve at the bar, then retain the existing center-at-end removal convention.
+- Only exactly monotone collinear **whole** paths (lead + control polygon + tail), parallel same-direction headings and half-width sum + 0.18m lateral separation may share a node. Turns, S-convergences and uncertain/almost-straight cases remain exclusive. Straight owners reserve their receiving band against other entries/sources; curved owners reserve the full exit strip. Committed vehicles continue clearing after signal changes; uncommitted red/amber fronts stay behind the shared bar.
+- All internal/controlled terminal paths and nonterminal candidates are fitted against the actual incident directed rectangles and shared junction hull, never widened pavement or reduced vehicle dimensions. Up to 45 bounded local mouth/handle/end variants are tried. Eight body corners/edge centers are checked at <=0.05m. Independent app tests still require construction and actual-triangle containment for all 18 car/motorcycle/bus left/right width fixtures. Failed turn search means `Tight_Turn` **for this fitter**, not proof of physical impossibility.
+- World-space oriented body checks span all road IDs. Runtime movement samples at <=0.10m; admission checks other bodies along the whole path at <=0.20m. These are conservative gameplay samples, not continuous swept-volume certification. Map replay fails on sampled overlap. Bicycle/motorcycle sources cycle width-aware preferred bands after successful admissions; that is packing, **not filtering** or instantaneous lane changing.
+
+Source validation first checks structural geometry, even if red/occupied entrance fitting cannot supply a body yet. Full body-fit validation uses the **actual fitted incoming slot** and the same `connector_laterals` receiving choices as runtime. A failed center-exit trial cannot reject a valid edge exit. Feasible-but-occupied choices do not emit `Tight_Turn`. Rejected scheduled demand remains pending, counters are conserved, and all choices are deterministic without additional RNG draws.
+
+Static fits are cached per world by road/exit, kind, normalized actual start, incoming/outgoing lateral and receiving-route continuation. Configure/reset/geometry rebuild clears the cache. Occupancy is never cached. This avoids minutes of repeatedly fitting identical unsupported pending trials. Cache size grows with distinct trials until reconfigure/reset; a large-map preprocessing/index can replace it if that ceiling matters. Node/road geometry is static during a run: rebuild the world after geometry edits. Speed-limit edits do not need a rebuild.
+
+## Diagnostics and ceilings
+
+`World.motion_issues` deduplicates `{road, exit, problem}`. Stderr reports observed unsupported attempts with class/incoming/preferred/receiving bands; the app displays the array. Reasons include degenerate links, short approach/exit, near-U-turn (forward dot < -0.95), `Tight_Turn`, and `Terminal_Clearance`. These are historical observations, not certification of an entire road pair for every vehicle/band. `check_maps` separately reports actual held vehicle IDs/classes/incoming and receiving bands, source no-fit demand, entrance waiting and cap waiting; cached failed alternatives are not counted as held demand.
+
+The compliant baseline remains deterministic. No driver traits/infractions/filtering behavior were added. The 120-agent cap remains. There is no compatible turning batch, congestion-aware routing, unlimited-demand fairness or general citywide deadlock guarantee. Spatial crossings without a shared node receive body checks but no node priority.
+
+Terminal policy keeps center-at-end removal; it never extends a bus into empty ground to clear paint. Controlled terminals must have their rear > crossing far + 0.5m at that endpoint. ALL internal/controlled terminal bodies must also pass the same actual-asphalt fitting check; failure is `Terminal_Clearance`, retained source pending or a diagnosed held vehicle. An internal destination is not an external exit. Only an explicitly **uncontrolled single-arm endpoint** retains the pre-existing boundary front-overhang abstraction (`terminal_is_external`). A receiving controlled stop/entry remains a boundary even if it is the vehicle's destination: the 21m bus exit-release9m/next-stop7m case is `Short_Exit` for both terminal and continuing routes. Tests reject 3m/6m narrow T-terminal buses and a 3m T-terminal car; positive 6m-bus/3m-car controls include actual forward pavement and require all body points plus last-sample rear clearance. No ghost reservation, off-pavement extension or renderer exemption is used.
+
+Known fitter ceiling: 6m -> 2m straight narrowing, 4.5m car at incoming lateral 2 leaves only 0.05m curb clearance; this center-tangent cubic family currently holds/diagnoses it. The same roads at lateral 1.5 execute a fitted merge plus reserved straight tail. Tests preserve both outcomes without widening pavement. A physical rear-axle trajectory is a future candidate explanation/improvement: body-center trajectory tangent is not a real bicycle-model heading. No wheelbase/calibration claim is made. Other tight two-arm/short OSM layouts remain unproven; accepting a sampled body-fit path does not establish real steering limits or pedestrian safety. On right turns, a body rear can overhang the far crossing edge while the center is already past it and the node remains reserved; there is no pedestrian behavior here.
+
+The original contradictory 3m-link/4.5m-car recovery test uses valid 40m/80m links now. The bus short-source regression uses an 11m approach where an authored band fits but the 10m bus cannot queue; terminal and continuing routes must reject identically with pending retained. Separate invalid-short controlled layout tests still reject configure.
+
+## Reproducible snapshots
+
+All runs below: seed 1, 2400 x 0.05s. Counts satisfy spawned = completed + active, and configured requested = spawned + pending. HCM has no configured object sidecar and uses synthetic demand.
+
+Historical **10-source** showcase, before this crossing/body-fit slice:
+
+| Stage | Showcase completed | Signalized completed | Max concurrent owners (showcase / signalized) |
+| --- | ---: | ---: | ---: |
+| One vehicle/node | 14 | 13 | 1 / 1 |
+| Straight batching | 23 | 31 | 3 / 5 |
+
+Both historical batching snapshots used identical demand, cap and RNG. HCM at the straight-batch stage: 60 spawned, 9 completed, 51 active, 70 observed issues, zero sampled overlaps.
+
+Current crossing/body-fit slice, **11-source** showcase (parent added `moto-west-turn`), not a direct demand-controlled comparison to the historical table:
+
+| Map | Sources | Spawned | Completed | Active | Pending | Historical issues | Actual held no-fit | Sampled overlaps |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| showcase | 11 | 137 | 17 | 120 | 8 | 2 | 1 | 0 |
+| signalized | 2 | 75 | 29 | 46 | 25 | 0 | 0 | 0 |
+| hcm | synthetic | 38 | 6 | 32 | 0 | 87 | 17 | 0 |
+
+Current showcase historical issues: bus16->28 incoming0 / receiving0,±0.5; truck19->0 incoming0 / receiving0,±0.55 (`Tight_Turn`). At 120s only truck ID26, road19->0 is actually held no-fit. No source is geometry-rejected; all 8 pending wait for the cap. Signalized pending25 wait at occupied entrances; none are no-fit. Max simultaneous owners remain 3/5/1. No terminal-clearance issue occurs in these three 120s snapshots.
+
+HCM issues: 9 short approaches, 47 short exits, 9 near-U-turns and 22 bounded-fit failures. Its 17 actual held vehicles at the snapshot are short-exit/U-turn cases; the additional sampled-fit diagnostics are not caused by unauthored zebra setbacks. HCM remains explicitly unsupported for many short shape edges. Zero sampled overlaps is not universal safety or calibrated HCMC throughput.
+
+## Captured focused discharge limit — runtime frozen
+
+Parent verification: 98 tests/build and quiet/busy 87–97s captures completed. The parent-owned `tools/check_capture` trace is `build/visual/authenticity/iteration-2/trace.csv`. Its focused-node evidence is **not abreast discharge**:
+
+- Busy: ID7 road6->8 at 88.00–95.20s (25.46731m connector), then ID12 on the same movement at 95.30–97.00s. Maximum simultaneous focused owners is **1**. ID7's sampled world Y moves -5.07500 -> -4.21967 before completion (parent-reported endpoint target -4.125). This is a non-collinear lateral convergence, so the strict straight-only batching exception does not apply.
+- Quiet: ID6 road6->25 turns at 88.00–96.10s (28.89461m connector); focused concurrency is also **1**. Fixture and whole-map maximum-owner counts of 3/5 remain valid, but do not demonstrate abreast release in this captured window.
+- Every active connector currently shares a 4m/s target ceiling (`src/sim/sim.odin`), including straight leads/tails. Roughly seven seconds for the busy connector is a measured gameplay/authenticity limitation, not a claim that the batching predicate is generally broken.
+
+Future candidates, **not implemented or calibrated**: preserve a feasible preferred world-space corridor across offset/width changes so a needless lateral convergence does not serialize otherwise disjoint bikes; review conservative compatibility only with actual full-path/receiving-band guards. Separately review the universal straight-connector speed ceiling versus road/kind desired speed, without weakening curved-path clearance, red/amber discipline, collision checks or reservation release. Do not cherry-pick a different capture window as a substitute for fixing measured discharge. Driver traits/filtering remain paused until this baseline review is accepted.

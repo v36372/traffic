@@ -1,0 +1,162 @@
+package sim
+
+import "core:testing"
+
+@(test)
+test_disjoint_straight_motorcycles_share_node_and_drain_deterministically :: proc(t: ^testing.T) {
+    a, b: World
+    worlds := [2]^World{&a, &b}
+    for w in worlds {
+        init(w, []Node{{{-60,0}}, {{0,0}}, {{60,0}}}, []Road{{0,1,3.5,8}, {1,2,3.5,8}}, 42)
+        testing.expect(t, configure(w, nil, []Spawn_Point{{0,2,86400,.Motorcycle}}))
+        for row in 0..<2 {
+            for band in 0..<3 {
+                lateral := source_lateral(3.5, .Motorcycle, band)
+                append(&w.vehicles, Vehicle{road = 0, distance = entry_distance(w, 0, .Motorcycle)-f32(row)*3.5,
+                    lateral = lateral, preferred_lateral = lateral, speed = 2, kind = .Motorcycle, id = u64(row*3+band+1)})
+            }
+        }
+        w.spawned, w.requested = 6, 6
+    }
+    defer destroy(&a)
+    defer destroy(&b)
+    max_owners := 0
+    for _ in 0..<1400 {
+        step(&a, 0.05)
+        step(&b, 0.05)
+        owners := 0
+        for v, i in a.vehicles {
+            testing.expect(t, v == b.vehicles[i])
+            if v.motion.active {
+                owners += 1
+                for other in a.vehicles[i+1:] {
+                    if other.motion.active { testing.expect(t, straight_corridors_disjoint(v.motion, v.kind, other.motion, other.kind)) }
+                }
+            }
+        }
+        max_owners = max(max_owners, owners)
+        expect_bodies_clear(t, &a)
+        testing.expect(t, a.requested == a.spawned+a.pending && a.spawned == a.completed+len(a.vehicles))
+        testing.expect(t, a.spawned == b.spawned && a.completed == b.completed && len(a.vehicles) == len(b.vehicles))
+    }
+    testing.expect(t, max_owners == 3, "all three motorcycle bands must traverse concurrently, not just queue abreast")
+    testing.expect(t, a.completed == 6 && len(a.vehicles) == 0 && a.pending == 0 && len(a.motion_issues) == 0)
+    testing.expect(t, a.rng == 42 && b.rng == 42)
+}
+
+@(test)
+test_parallel_car_and_bike_share_but_conflicting_turn_waits :: proc(t: ^testing.T) {
+    w: World
+    init(&w, []Node{{{-60,0}}, {{0,0}}, {{60,0}}, {{0,-60}}}, []Road{{0,1,3.5,8}, {1,2,3.5,8}, {3,1,3.5,8}})
+    defer destroy(&w)
+    testing.expect(t, configure(&w, nil, []Spawn_Point{{0,2,86400,.Car}, {2,2,86400,.Motorcycle}}))
+    append(&w.vehicles, Vehicle{road = 0, distance = entry_distance(&w, 0, .Car), lateral = -0.6, preferred_lateral = -0.6, speed = 2, kind = .Car, id = 1})
+    append(&w.vehicles, Vehicle{road = 0, distance = entry_distance(&w, 0, .Motorcycle), lateral = 0.93, preferred_lateral = 0.93, speed = 2, kind = .Motorcycle, id = 2})
+    append(&w.vehicles, Vehicle{road = 2, distance = entry_distance(&w, 2, .Motorcycle), speed = 2, kind = .Motorcycle, spawn_index = 1, id = 3})
+    w.spawned, w.requested = 3, 3
+    step(&w, 0.05)
+    testing.expect(t, w.vehicles[0].motion.active && w.vehicles[1].motion.active && !w.vehicles[2].motion.active)
+    saw_turn := false
+    for _ in 0..<1400 {
+        step(&w, 0.05)
+        owners := 0
+        turn_active := false
+        for v in w.vehicles {
+            if v.motion.active { owners += 1 }
+            if v.id == 3 && v.motion.active { turn_active = true; saw_turn = true }
+        }
+        if turn_active { testing.expect(t, owners == 1, "turn/converging movement must retain exclusive node ownership") }
+        expect_bodies_clear(t, &w)
+    }
+    testing.expect(t, saw_turn && w.completed == 3 && len(w.vehicles) == 0)
+}
+
+@(test)
+test_receiving_sources_respect_straight_bands_and_curved_full_strip :: proc(t: ^testing.T) {
+    w: World
+    init(&w, []Node{{{-60,0}}, {{0,0}}, {{60,0}}, {{0,-60}}}, []Road{{0,1,3.5,8}, {1,2,3.5,8}, {3,1,3.5,8}})
+    defer destroy(&w)
+    testing.expect(t, configure(&w, nil, []Spawn_Point{{0,2,86400,.Motorcycle}, {2,2,86400,.Motorcycle}, {1,2,0.05,.Motorcycle}}))
+    append(&w.vehicles, Vehicle{road = 0, distance = entry_distance(&w, 0, .Motorcycle), lateral = -0.93, preferred_lateral = -0.93, kind = .Motorcycle, id = 1})
+    testing.expect(t, acquire_connector(&w, 0, 1))
+    testing.expect(t, receiving_reserved(&w, 1, 0, .Motorcycle, -0.93))
+    testing.expect(t, !free_lateral(&w, 1, 0, .Motorcycle, -0.93))
+    testing.expect(t, !receiving_reserved(&w, 1, 0, .Motorcycle, 0.93))
+    testing.expect(t, free_lateral(&w, 1, 0, .Motorcycle, 0.93))
+    testing.expect(t, receiving_reserved(&w, 1, 0, .Car, 0.5), "vehicle width must participate in the receiving-band guard")
+    testing.expect(t, !receiving_reserved(&w, 1, 0, .Car, 0.6) && free_lateral(&w, 1, 0, .Car, 0.6))
+    scheduled_spawns(&w, 0.05)
+    testing.expect(t, len(w.vehicles) == 2 && w.spawn_runtime[2].admitted == 1 && w.pending == 0,
+        "an outgoing source may use a disjoint band while a straight connector is in flight")
+    testing.expect(t, abs(w.vehicles[1].lateral-w.vehicles[0].lateral) >= 0.93)
+    expect_bodies_clear(t, &w)
+
+    clear(&w.vehicles)
+    turn := Vehicle{road = 2, distance = entry_distance(&w, 2, .Motorcycle), kind = .Motorcycle, spawn_index = 1}
+    c, problem := make_connector(&w, turn, 1, -0.93)
+    testing.expect(t, problem == .None)
+    _, straight := straight_direction(c)
+    testing.expect(t, !straight)
+    turn.motion = c
+    append(&w.vehicles, turn)
+    admitted := w.spawn_runtime[2].admitted
+    scheduled_spawns(&w, 0.05)
+    testing.expect(t, w.spawn_runtime[2].admitted == admitted && w.pending == 1)
+    testing.expect(t, receiving_reserved(&w, 1, 0, .Motorcycle, 0.93) && !free_lateral(&w, 1, 0, .Motorcycle, 0.93),
+        "a curve must reserve its full receiving strip even when another source requests the opposite band")
+}
+
+@(test)
+test_skew_and_converging_corridors_do_not_qualify_for_straight_batch :: proc(t: ^testing.T) {
+    w: World
+    init(&w, []Node{{{-60,0}}, {{0,0}}, {{60,0}}, {{60,60}}}, []Road{{0,1,3.5,8}, {1,2,3.5,8}, {1,3,3.5,8}})
+    defer destroy(&w)
+    testing.expect(t, configure(&w, nil, []Spawn_Point{{0,2,86400,.Motorcycle}}))
+    a := Vehicle{road = 0, lateral = -0.93, kind = .Motorcycle}
+    straight, problem := make_connector(&w, a, 1, -0.93)
+    testing.expect(t, problem == .None)
+    converging, _ := make_connector(&w, a, 1, 0.93)
+    skew, _ := make_connector(&w, a, 2, 0.93)
+    testing.expect(t, !straight_corridors_disjoint(straight, .Motorcycle, converging, .Motorcycle))
+    testing.expect(t, !straight_corridors_disjoint(straight, .Motorcycle, skew, .Motorcycle))
+    almost := straight
+    almost.controls[1].y += 0.00001
+    _, accepted := straight_direction(almost)
+    testing.expect(t, !accepted, "almost-straight sampled curves must not qualify for the analytic straight exception")
+    close := straight
+    close.start.y += 0.92
+    for &point in close.controls { point.y += 0.92 }
+    testing.expect(t, !straight_corridors_disjoint(straight, .Motorcycle, close, .Motorcycle), "less than the 0.18m body gap must serialize")
+}
+
+@(test)
+test_parallel_commitment_clears_but_red_band_must_wait :: proc(t: ^testing.T) {
+    w: World
+    init(&w, []Node{{{-60,0}}, {{0,0}}, {{60,0}}, {{0,-60}}}, []Road{{0,1,3.5,8}, {1,2,3.5,8}, {3,1,3.5,8}})
+    defer destroy(&w)
+    testing.expect(t, configure(&w, []Signal_Plan{{1,100,1,1,0}}, []Spawn_Point{{0,2,86400,.Motorcycle}}))
+    for band in 0..<2 {
+        lateral := source_lateral(3.5, .Motorcycle, band)
+        append(&w.vehicles, Vehicle{road = 0, distance = entry_distance(&w, 0, .Motorcycle), lateral = lateral,
+            preferred_lateral = lateral, speed = 2, kind = .Motorcycle, id = u64(band+1)})
+    }
+    step(&w, 0.05)
+    testing.expect(t, w.vehicles[0].motion.active && w.vehicles[1].motion.active)
+    progress := w.vehicles[0].motion.progress
+    append(&w.vehicles, Vehicle{road = 0, distance = entry_distance(&w, 0, .Motorcycle), lateral = 0.93,
+        preferred_lateral = 0.93, speed = 2, kind = .Motorcycle, id = 3})
+    w.spawned, w.requested = 3, 3
+    w.signals[0].offset, w.time = 102, 0
+    step(&w, 0.05)
+    testing.expect(t, w.vehicles[0].motion.progress > progress && !w.vehicles[2].motion.active)
+    for _ in 0..<200 {
+        step(&w, 0.05)
+        for v in w.vehicles {
+            if v.id == 3 { testing.expect(t, v.road == 0 && !v.motion.active && v.distance <= entry_distance(&w, 0, v.kind)+0.001) }
+        }
+        expect_bodies_clear(t, &w)
+    }
+    w.signals[0].offset, w.time = 0, 0
+    for _ in 0..<800 { step(&w, 0.05); expect_bodies_clear(t, &w) }
+    testing.expect(t, w.completed == 3 && len(w.vehicles) == 0 && w.pending == 0 && len(w.motion_issues) == 0)
+}
