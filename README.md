@@ -72,7 +72,7 @@ Crosswalk paint now exists, but pedestrian behavior does not. Opt-in seeded spee
 
 - Small-population mixed-width traffic spike, capped at 120 active vehicles; not the plan's proposed 5,000-agent target.
 - Cars, motorcycles, bicycles, buses, trucks and cargo tricycles have different dimensions/speeds. Bus passengers, pedestrian networks and observed travel demand are not implemented yet.
-- Configured sources have finite routes; random-demand maps can still loop. Vehicles now follow simulation-owned lead/curve/tail paths with reservations and sampled body-pavement checks. Only disjoint straight corridors can cross together; turns/lateral convergence remain conservatively serialized, and unsupported movements are diagnosed rather than teleported. This is not citywide collision or kinematic certification.
+- Configured sources have finite routes; random-demand maps can still loop. Vehicles follow simulation-owned lead/curve/tail steering paths with sampled body-pavement checks. Local rolling gap acceptance allows concurrent turns/crossing streams without whole-path or receiving-road reservations; unsupported geometry is diagnosed rather than teleported. This is not citywide collision or kinematic certification.
 - No treasury, police, corruption/trust, save games, or campaign objectives yet.
 - Imported road widths/speeds may be inferred; map geometry is not evidence of current regulations or traffic conditions.
 

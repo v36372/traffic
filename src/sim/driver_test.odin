@@ -100,7 +100,9 @@ test_traits_affect_speed_and_following :: proc(t: ^testing.T) {
         append(&w.vehicles, Vehicle{road = 0, distance = 20, speed = 4, kind = .Car, spawn_index = -1, driver = {traits = {1, 0.4, 2}}})
     }
     distant.vehicles[1].driver.traits.headway = 2
-    for w in ([]^World{&fast, &slow, &close, &distant}) { step(w, 0.05) }
+    // Both close followers initially need maximum braking; compare their
+    // preferred gaps after reacting, not during that shared emergency tick.
+    for w in ([]^World{&fast, &slow, &close, &distant}) { for _ in 0..<20 { step(w, 0.05) } }
     testing.expect(t, fast.vehicles[0].speed > slow.vehicles[0].speed)
     testing.expect(t, close.vehicles[1].speed > distant.vehicles[1].speed)
 }

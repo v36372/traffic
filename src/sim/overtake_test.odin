@@ -215,3 +215,41 @@ test_fixed_speed_car_can_pass_in_varied_scenario :: proc(t: ^testing.T) {
     }
     testing.expect(t, turned && w.vehicles[1].distance > w.vehicles[0].distance)
 }
+
+@(test)
+test_near_end_yielding_rear_recovers :: proc(t: ^testing.T) {
+    for reversed in ([]bool{false, true}) {
+        w: World
+        passing_world(&w, false)
+        defer destroy(&w)
+        clear(&w.vehicles)
+        passer := Vehicle{id = 41, road = 0, distance = 68.079, lateral = -1.395, kind = .Motorcycle, spawn_index = -1,
+            lane = {active = true, start = 56.579, from = -0.345, to = -1.395},
+            driver = {traits = {speed_factor = 1, headway = 0.8, acceleration = 2}}}
+        rear := Vehicle{id = 47, road = 0, distance = 66.129, lateral = -1.395, kind = .Motorcycle, spawn_index = -1,
+            driver = {traits = {speed_factor = 1, headway = 0.8, acceleration = 2}}}
+        pi, ri := 0, 1
+        if reversed { append(&w.vehicles, rear, passer); pi, ri = 1, 0 } else { append(&w.vehicles, passer, rear) }
+        cache_geometry(&w)
+        testing.expect(t, !bodies_overlap(&w, passer, rear))
+        testing.expect(t, lane_rear_safe(&w, pi, passer, false))
+        testing.expect(t, !lane_rear_safe(&w, pi, passer, true))
+        w.vehicles[ri].speed = 1
+        testing.expect(t, !lane_rear_safe(&w, pi, passer, false))
+        blocked, _ := move_vehicle(&w, pi, 0.1)
+        testing.expect(t, blocked == 0 && w.vehicles[pi].distance == passer.distance)
+        w.vehicles[ri].speed = 0
+        // The yielding exception must not bypass the actual body check.
+        obstacle := rear
+        obstacle.id, obstacle.distance = 48, passer.distance+kind_length(.Motorcycle)+0.11
+        append(&w.vehicles, obstacle)
+        blocked, _ = move_vehicle(&w, pi, 0.1)
+        testing.expect(t, blocked == 0 && !bodies_overlap(&w, w.vehicles[pi], obstacle))
+        pop(&w.vehicles)
+        for _ in 0..<100 {
+            step(&w, 0.05)
+            testing.expect(t, !bodies_overlap(&w, w.vehicles[pi], w.vehicles[ri]))
+        }
+        testing.expect(t, !w.vehicles[pi].lane.active && w.vehicles[pi].distance > 68.579)
+    }
+}

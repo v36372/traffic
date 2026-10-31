@@ -32,11 +32,9 @@ test_source_and_node_admission_try_noncentral_receiving_bands :: proc(t: ^testin
     owner.motion.progress = c.length-0.1
     append(&w.vehicles, owner)
     w.spawned, w.requested = 2, 2
-    testing.expect(t, !acquire_connector(&w, 0, 6) && len(w.motion_issues) == 0,
-        "valid geometry blocked by a node owner is temporary occupancy, not Tight_Turn")
-    ordered_remove(&w.vehicles, 1)
-    w.completed += 1
-    testing.expect(t, acquire_connector(&w, 0, 6) && w.vehicles[0].motion.active && len(w.motion_issues) == 0)
+    testing.expect(t, acquire_connector(&w, 0, 6) && len(w.motion_issues) == 0,
+        "a distant connector remainder does not reserve the candidate's local conflict window")
+    testing.expect(t, w.vehicles[0].motion.active && w.vehicles[1].motion.active)
 }
 
 @(test)

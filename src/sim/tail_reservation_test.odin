@@ -3,41 +3,41 @@ package sim
 import "core:testing"
 
 @(test)
-test_curve_release_requires_clear_remaining_envelope :: proc(t: ^testing.T) {
-    straight := Connector{start = {0,0}, controls = [4]Vec2{{0,0},{2,0},{8,0},{10,0}}, outgoing = {1,0}, tail = 1}
-    turn := Connector{start = {-5,0}, controls = [4]Vec2{{-5,0},{-3,0},{0,3},{0,5}}, outgoing = {0,1}, lead = 2, tail = 4}
-    turn.arc[64] = 8
-    turn.length = 14
-    turn.progress = 10
-    testing.expect(t, remaining_corridor_disjoint(straight, .Motorcycle, turn, .Motorcycle))
-    before := turn; before.progress = 9.99
-    testing.expect(t, remaining_corridor_disjoint(straight, .Motorcycle, before, .Motorcycle), "clear remainder of curve may release before tail")
-    crossing := turn; crossing.progress = 0
-    testing.expect(t, !remaining_corridor_disjoint(straight, .Motorcycle, crossing, .Motorcycle), "remaining curve crossing the corridor must block")
-    separated_lead := turn
-    separated_lead.start.y = 5
-    for &point in separated_lead.controls { point.y += 5 }
-    separated_lead.progress = 0
-    testing.expect(t, remaining_corridor_disjoint(straight, .Motorcycle, separated_lead, .Motorcycle), "clear lead and full curve may release")
-    mirrored := turn
-    mirrored.start.y = -mirrored.start.y
-    mirrored.outgoing.y = -mirrored.outgoing.y
-    for &point in mirrored.controls { point.y = -point.y }
-    testing.expect(t, remaining_corridor_disjoint(straight, .Motorcycle, mirrored, .Motorcycle), "clearance works on either side")
-    far_straight, far_turn := straight, turn
-    far_straight.start.x += 1e7
-    for &point in far_straight.controls { point.x += 1e7 }
-    far_turn.start.x += 1e7
-    for &point in far_turn.controls { point.x += 1e7 }
-    testing.expect(t, !remaining_corridor_disjoint(far_straight, .Motorcycle, far_turn, .Motorcycle), "large-coordinate rounding margin must fail closed")
-    conflict := turn; conflict.controls[3].y = 1
-    testing.expect(t, !remaining_corridor_disjoint(straight, .Motorcycle, conflict, .Motorcycle), "body envelope near the corridor must block")
-    inward := turn; inward.outgoing = {0,-1}; inward.tail = 1; inward.length = 11
-    testing.expect(t, !remaining_corridor_disjoint(straight, .Motorcycle, inward, .Motorcycle), "past the tail an inward outgoing road could enter the corridor")
-    curved := straight; curved.controls[1].y = 0.001
-    testing.expect(t, !remaining_corridor_disjoint(curved, .Motorcycle, turn, .Motorcycle), "candidate must be exactly straight")
-    no_tail := turn; no_tail.tail = 0
-    testing.expect(t, !remaining_corridor_disjoint(straight, .Motorcycle, no_tail, .Motorcycle))
-    parallel := straight; parallel.progress = 10; parallel.length = 11
-    testing.expect(t, !remaining_corridor_disjoint(straight, .Motorcycle, parallel, .Motorcycle), "straight owners use only the existing straight-band rule")
+test_local_gap_rejects_conflicting_forecast_but_not_distant_traffic :: proc(t: ^testing.T) {
+    w: World
+    init(&w, []Node{{{-60,0}}, {{0,0}}, {{60,0}}, {{0,-60}}, {{0,60}}}, []Road{
+        {0,1,4,8}, {1,2,4,8}, {3,1,4,8}, {1,4,4,8},
+    })
+    defer destroy(&w)
+    testing.expect(t, configure(&w, nil, []Spawn_Point{{0,2,86400,.Motorcycle}, {2,4,86400,.Motorcycle}}))
+    a := Vehicle{road = 0, distance = entry_distance(&w, 0, .Motorcycle), speed = 4, kind = .Motorcycle}
+    b := Vehicle{road = 2, distance = entry_distance(&w, 2, .Motorcycle), speed = 4, kind = .Motorcycle, spawn_index = 1}
+    c, problem := make_connector(&w, a, 1, 0)
+    testing.expect(t, problem == .None)
+    a.motion = c
+    b.motion, problem = make_connector(&w, b, 3, 0)
+    testing.expect(t, problem == .None)
+    append(&w.vehicles, a, b)
+    testing.expect(t, !local_gap_clear(&w, a, 0, 4), "crossing trajectories inside the 1.5s window must conflict")
+
+    w.vehicles[1] = Vehicle{road = 1, distance = 30, speed = 0, kind = .Motorcycle}
+    testing.expect(t, local_gap_clear(&w, a, 0, 4), "a stopped vehicle outside the local conflict window is not a route reservation")
+}
+
+@(test)
+test_forecast_stops_at_uncommitted_next_entry :: proc(t: ^testing.T) {
+    w: World
+    init(&w, []Node{{{-60,0}}, {{0,0}}, {{60,0}}, {{120,0}}}, []Road{
+        {0,1,4,8}, {1,2,4,8}, {2,3,4,8},
+    })
+    defer destroy(&w)
+    testing.expect(t, configure(&w, nil, []Spawn_Point{{0,3,86400,.Motorcycle}}))
+    v := Vehicle{road = 0, distance = entry_distance(&w, 0, .Motorcycle), speed = 4, kind = .Motorcycle}
+    c, problem := make_connector(&w, v, 1, 0)
+    testing.expect(t, problem == .None)
+    v.motion = c
+    at_next_entry := forecast_vehicle(&w, v, c.length+100)
+    testing.expect(t, !at_next_entry.motion.active && at_next_entry.road == 1)
+    testing.expect(t, at_next_entry.distance <= entry_distance(&w, 1, .Motorcycle),
+        "rolling prediction must stop at the next uncommitted entry, not own another route segment")
 }

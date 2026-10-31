@@ -18,7 +18,13 @@ driver, ok := sim.make_driver(config, 42, 1, .Motorcycle, .Assertive)
 // Configure the world before starting it; then assign driver to a motorcycle.
 ```
 
-Each driver owns its persistent traits and `Cruising`, `Following`, `Stopped_Signal`, `Passing` or `Junction` mode. A shared state machine uses the chosen persona and vehicle kind: assertive, balanced and cautious drivers require respectively more than 0.5, 1 and 2 m/s advantage before attempting a pass; buses and trucks require another 0.5 m/s. All use the same physical, signal and clearance checks. The constructor is deterministic and does not consume demand RNG. Both spawn paths create drivers through it; in a varied configuration, each spawned trip gets a deterministic synthetic persona. This is one parameterized machine, not separately authored driving models for every combination. Persona-specific behavior currently only changes passing decisions; reaction and infractions are not implemented.
+Each driver owns its persistent traits and `Cruising`, `Following`, `Stopped_Signal`, `Passing`, `Junction` or `Following_Junction` mode. Intersection paths are steering guides, not reservations. Drivers use a synthetic 1.5-second rolling prediction of nearby bodies, yielding to earlier entrants at imminent conflicts. Turns and crossing streams may occupy a junction together when local time/space gaps permit. No receiving strip or outgoing ray is owned, and a leader need not wait for followers before turning at its next junction. A shared state machine uses the chosen persona and vehicle kind: assertive, balanced and cautious drivers require respectively more than 0.5, 1 and 2 m/s advantage before attempting a pass; buses and trucks require another 0.5 m/s. All use the same physical, signal and clearance checks. The constructor is deterministic and does not consume demand RNG. Both spawn paths create drivers through it; in a varied configuration, each spawned trip gets a deterministic synthetic persona. This is one parameterized machine, not separately authored driving models for every combination. Persona-specific behavior currently only changes passing decisions; reaction and infractions are not implemented.
+
+## Following without a passing gap
+
+The sampled 1.4–2.6 m/s² acceleration is a personal **ceiling**, not constant actual acceleration. Each tick, aligned leaders' world-space body gaps and relative speeds limit acceleration through a damped following controller. The synthetic desired gap is 0.5m plus speed × preferred headway. When passing is unavailable, followers ease off and settle near the leader's pace; they accelerate again as space opens. This applies on links and through connector boundaries, without treating frozen incoming-road distances as occupied positions.
+
+Rolling gap prediction uses the proposed speed for this tick, including speeds below 1m/s; it no longer pretends that a slowly following rider will advance at least 1m/s. Physical-body checks and emergency movement limits remain last-resort guards. The aligned-body projection is approximate on sharp curves; those still use local gap/body checks rather than a calibrated curved-path following model.
 
 ## Five tuning inputs
 
@@ -40,7 +46,7 @@ Separate ordinary actions, deliberate infractions and simulation defects. Cleari
 
 General queue filtering needs continuous, validated lateral paths and merge/gap checks. The implemented link-only passing maneuver is not queue filtering: it does not cross a centerline, enter a junction during the lane change or bypass a red light. Fixed lateral source slots are also **not** filtering. Wrong-way encroachment, red entry and sidewalk use must be separately identifiable; none is silently implied by an aggressiveness slider.
 
-Rule-breaking does not disable body overlap checks, swept movement validation or pavement geometry. Crash mechanics are a separate explicit feature, not numerical overlap presented as realism. If conservative conflict reservations prevent an attempted unsafe entry, record the attempt as blocked rather than pretend a violation happened.
+Rule-breaking does not disable body overlap checks, swept movement validation or pavement geometry. Crash mechanics are a separate explicit feature, not numerical overlap presented as realism. If local gap or physical clearance checks prevent an attempted unsafe entry, record the attempt as blocked rather than pretend a violation happened.
 
 ## Verified rule reference
 

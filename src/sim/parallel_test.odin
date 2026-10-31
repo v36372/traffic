@@ -27,19 +27,14 @@ test_disjoint_straight_motorcycles_share_node_and_drain_deterministically :: pro
         owners := 0
         for v, i in a.vehicles {
             testing.expect(t, v == b.vehicles[i])
-            if v.motion.active {
-                owners += 1
-                for other in a.vehicles[i+1:] {
-                    if other.motion.active { testing.expect(t, straight_corridors_disjoint(v.motion, v.kind, other.motion, other.kind)) }
-                }
-            }
+            if v.motion.active { owners += 1 }
         }
         max_owners = max(max_owners, owners)
         expect_bodies_clear(t, &a)
         testing.expect(t, a.requested == a.spawned+a.pending && a.spawned == a.completed+len(a.vehicles))
         testing.expect(t, a.spawned == b.spawned && a.completed == b.completed && len(a.vehicles) == len(b.vehicles))
     }
-    testing.expect(t, max_owners == 3, "all three motorcycle bands must traverse concurrently, not just queue abreast")
+    testing.expect(t, max_owners > 3, "the following row must enter before the whole leading row finishes its paths")
     testing.expect(t, a.completed == 6 && len(a.vehicles) == 0 && a.pending == 0 && len(a.motion_issues) == 0)
     testing.expect(t, a.rng == 42 && b.rng == 42)
 }
@@ -55,55 +50,30 @@ test_parallel_car_and_bike_share_but_conflicting_turn_waits :: proc(t: ^testing.
     append(&w.vehicles, Vehicle{road = 2, distance = entry_distance(&w, 2, .Motorcycle), speed = 2, kind = .Motorcycle, spawn_index = 1, id = 3})
     w.spawned, w.requested = 3, 3
     step(&w, 0.05)
-    testing.expect(t, w.vehicles[0].motion.active && w.vehicles[1].motion.active && !w.vehicles[2].motion.active)
     saw_turn := false
     for _ in 0..<1400 {
         step(&w, 0.05)
-        owners := 0
-        turn_active := false
         for v in w.vehicles {
-            if v.motion.active { owners += 1 }
-            if v.id == 3 && v.motion.active { turn_active = true; saw_turn = true }
+            if v.id == 3 && v.motion.active { saw_turn = true }
         }
-        if turn_active { testing.expect(t, owners == 1, "turn/converging movement must retain exclusive node ownership") }
         expect_bodies_clear(t, &w)
     }
     testing.expect(t, saw_turn && w.completed == 3 && len(w.vehicles) == 0)
 }
 
 @(test)
-test_receiving_sources_respect_straight_bands_and_curved_full_strip :: proc(t: ^testing.T) {
+test_distant_receiving_occupant_does_not_preoccupy_route :: proc(t: ^testing.T) {
     w: World
-    init(&w, []Node{{{-60,0}}, {{0,0}}, {{60,0}}, {{0,-60}}}, []Road{{0,1,3.5,8}, {1,2,3.5,8}, {3,1,3.5,8}})
+    init(&w, []Node{{{-60,0}}, {{0,0}}, {{60,0}}}, []Road{{0,1,3.5,8}, {1,2,3.5,8}})
     defer destroy(&w)
-    testing.expect(t, configure(&w, nil, []Spawn_Point{{0,2,86400,.Motorcycle}, {2,2,86400,.Motorcycle}, {1,2,0.05,.Motorcycle}}))
-    append(&w.vehicles, Vehicle{road = 0, distance = entry_distance(&w, 0, .Motorcycle), lateral = -0.93, preferred_lateral = -0.93, kind = .Motorcycle, id = 1})
-    testing.expect(t, acquire_connector(&w, 0, 1))
-    testing.expect(t, receiving_reserved(&w, 1, 0, .Motorcycle, -0.93))
-    testing.expect(t, !free_lateral(&w, 1, 0, .Motorcycle, -0.93))
-    testing.expect(t, !receiving_reserved(&w, 1, 0, .Motorcycle, 0.93))
-    testing.expect(t, free_lateral(&w, 1, 0, .Motorcycle, 0.93))
-    testing.expect(t, receiving_reserved(&w, 1, 0, .Car, 0.5), "vehicle width must participate in the receiving-band guard")
-    testing.expect(t, !receiving_reserved(&w, 1, 0, .Car, 0.6) && free_lateral(&w, 1, 0, .Car, 0.6))
-    scheduled_spawns(&w, 0.05)
-    testing.expect(t, len(w.vehicles) == 2 && w.spawn_runtime[2].admitted == 1 && w.pending == 0,
-        "an outgoing source may use a disjoint band while a straight connector is in flight")
-    testing.expect(t, abs(w.vehicles[1].lateral-w.vehicles[0].lateral) >= 0.93)
+    testing.expect(t, configure(&w, nil, []Spawn_Point{{0,2,86400,.Motorcycle}}))
+    append(&w.vehicles,
+        Vehicle{road = 0, distance = entry_distance(&w, 0, .Motorcycle), kind = .Motorcycle, id = 1},
+        Vehicle{road = 1, distance = 30, speed = 0, kind = .Motorcycle, id = 2})
+    testing.expect(t, acquire_connector(&w, 0, 1), "a distant exit occupant is outside the rolling conflict window")
+    testing.expect(t, w.vehicles[0].motion.active && !bodies_overlap(&w, w.vehicles[0], w.vehicles[1]))
+    _, _ = move_vehicle(&w, 0, 0.5)
     expect_bodies_clear(t, &w)
-
-    clear(&w.vehicles)
-    turn := Vehicle{road = 2, distance = entry_distance(&w, 2, .Motorcycle), kind = .Motorcycle, spawn_index = 1}
-    c, problem := make_connector(&w, turn, 1, -0.93)
-    testing.expect(t, problem == .None)
-    _, straight := straight_direction(c)
-    testing.expect(t, !straight)
-    turn.motion = c
-    append(&w.vehicles, turn)
-    admitted := w.spawn_runtime[2].admitted
-    scheduled_spawns(&w, 0.05)
-    testing.expect(t, w.spawn_runtime[2].admitted == admitted && w.pending == 1)
-    testing.expect(t, receiving_reserved(&w, 1, 0, .Motorcycle, 0.93) && !free_lateral(&w, 1, 0, .Motorcycle, 0.93),
-        "a curve must reserve its full receiving strip even when another source requests the opposite band")
 }
 
 @(test)

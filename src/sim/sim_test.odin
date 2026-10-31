@@ -50,7 +50,7 @@ test_safe_following_and_queue :: proc(t: ^testing.T) {
 
 @(test)
 test_narrowing_transition_and_blocked_recovery :: proc(t: ^testing.T) {
-    // Long enough for a 4.5m body, the connector and a receiving reservation.
+    // Long enough for a 4.5m body, the connector and receiving clearance.
     nodes := []Node{{{0, 0}}, {{40, 0}}, {{120, 0}}}
     roads := []Road{{0, 1, 6.0, 8.0}, {1, 2, 2.0, 8.0}}
     narrow: World
@@ -65,7 +65,7 @@ test_narrowing_transition_and_blocked_recovery :: proc(t: ^testing.T) {
         if c.active && c.tail > 0 && c.progress > c.lead+c.arc[64] {
             saw_tail = true
             _, f := vehicle_pose(&narrow, narrow.vehicles[0])
-            testing.expect(t, f.x > 0.9999 && abs(f.y) < 0.0001 && receiving_reserved(&narrow, 1, 0, .Car, 0))
+            testing.expect(t, f.x > 0.9999 && abs(f.y) < 0.0001)
             a, af := connector_pose(c, c.lead+c.arc[64]-0.001)
             b, bf := connector_pose(c, c.lead+c.arc[64]+0.001)
             testing.expect(t, vec_distance(a, b) < 0.003 && af.x*bf.x+af.y*bf.y > 0.999)
@@ -73,7 +73,7 @@ test_narrowing_transition_and_blocked_recovery :: proc(t: ^testing.T) {
         if narrow.vehicles[0].road == 1 { break }
     }
     testing.expect(t, narrow.vehicles[0].road == 1)
-    testing.expect(t, saw_tail, "finish steering before entering the narrow exit, but retain reservation through the straight tail")
+    testing.expect(t, saw_tail, "finish steering before entering the narrow exit, retaining sampled body clearance through the straight tail")
     testing.expect(t, abs(narrow.vehicles[0].lateral) <= 0.05+0.001)
 
     blocked: World
@@ -84,7 +84,9 @@ test_narrowing_transition_and_blocked_recovery :: proc(t: ^testing.T) {
     append(&blocked.vehicles, Vehicle{road = 1, kind = .Car, spawn_index = -1})
     for _ in 0..<50 { step(&blocked, 0.05) }
     testing.expect(t, blocked.vehicles[0].road == 0)
-    testing.expect(t, !blocked.vehicles[0].motion.active && blocked.vehicles[0].distance+kind_length(.Car)*0.5 <= stop_line_distance(&blocked, 0)+0.001)
+    p, _ := vehicle_pose(&blocked, blocked.vehicles[0])
+    testing.expect(t, blocked.vehicles[0].speed < 0.1 && p.x+kind_length(.Car)*0.5 <= 40-kind_length(.Car)*0.5+0.001,
+        "a blocked rider may begin steering but must stop behind the physical body, not reserve its exit")
     blocked.vehicles[1].distance = 20
     blocked.roads[1].speed_limit = 6
     for _ in 0..<200 {
@@ -125,9 +127,9 @@ test_seeded_invariants_every_tick :: proc(t: ^testing.T) {
                 testing.expect(t, abs(v.lateral) + kind_width(v.kind)*0.5 <= a.roads[v.road].width*0.5 + 0.001)
                 for j in i+1..<len(a.vehicles) {
                     other := a.vehicles[j]
-                    if v.road == other.road && abs(v.lateral-other.lateral) < (kind_width(v.kind)+kind_width(other.kind))*0.5 + 0.18 {
-                        testing.expect(t, abs(v.distance-other.distance) >= (kind_length(v.kind)+kind_length(other.kind))*0.5 - 0.001)
-                    }
+                    // The pose is authoritative across road IDs and while
+                    // road-local distance is frozen during a connector.
+                    testing.expect(t, !bodies_overlap(&a, v, other, 0), "actual world-space bodies must remain separate")
                 }
             }
         }

@@ -38,7 +38,8 @@ test_angle_boundaries_red_queue_green_release :: proc(t: ^testing.T) {
         // angle interpolation branch or renderer-side heading correction.
         w.signals[0].green, w.signals[0].offset, w.time = 100, 0, 0
         for _ in 0..<800 { step(&w, 0.05); expect_bodies_clear(t, &w) }
-        testing.expect(t, w.completed == 3 && len(w.vehicles) == 0 && len(w.motion_issues) == 0)
+        testing.expect(t, w.completed == 3 && len(w.vehicles) == 0 && len(w.motion_issues) == 0,
+            fmt.tprintf("angle=%g completed=%d vehicles=%v issues=%v", angle, w.completed, w.vehicles[:], w.motion_issues[:]))
         destroy(&w)
     }
 }
@@ -56,26 +57,23 @@ test_shared_node_phase_change_and_reserved_exit :: proc(t: ^testing.T) {
     w.spawned, w.requested = 2, 2
     step(&w, 0.05)
     testing.expect(t, w.vehicles[0].motion.active && !w.vehicles[1].motion.active)
-    testing.expect(t, receiving_reserved(&w, 1, 0, .Motorcycle, 0))
-    testing.expect(t, !free_lateral(&w, 1, 0, .Motorcycle, 0), "an outgoing source cannot invalidate a reserved exit")
+    w.vehicles[1].distance -= 20
+    w.vehicles[1].speed = 0
     progress := w.vehicles[0].motion.progress
     w.signals[0].offset, w.time = 102, 0
     testing.expect(t, signal_state(&w, 0) == .Red && signal_state(&w, 2) == .Green)
     step(&w, 0.05)
-    testing.expect(t, w.vehicles[0].motion.progress > progress && !w.vehicles[1].motion.active)
+    testing.expect(t, w.vehicles[0].motion.progress > progress)
     saw_second, saw_release := false, false
     for _ in 0..<800 {
         step(&w, 0.05)
-        owners := 0
         for v in w.vehicles {
-            if v.motion.active { owners += 1 }
             if v.id == 1 && v.road == 1 {
                 saw_release = true
                 testing.expect(t, v.distance-kind_length(v.kind)*0.5 >= junction_mouth_depth(&w, 1)+0.999)
             }
             if v.id == 2 && v.motion.active { saw_second = true }
         }
-        testing.expect(t, owners <= 1)
         expect_bodies_clear(t, &w)
     }
     testing.expect(t, saw_second && saw_release && w.completed == 2)
@@ -92,7 +90,15 @@ test_blocked_exit_pending_and_recovery :: proc(t: ^testing.T) {
     for _ in 0..<500 {
         step(&w, 0.05)
         expect_bodies_clear(t, &w)
-        for v in w.vehicles { testing.expect(t, !v.motion.active) }
+        for v in w.vehicles {
+            p, _ := vehicle_pose(&w, v)
+            if v.id == 1 {
+                testing.expect(t, v.road == 1 && v.distance == 0 && v.speed == 0)
+            } else {
+                testing.expect(t, p.x+kind_length(v.kind)*0.5 <= -kind_length(.Car)*0.5+0.001,
+                    "steering may begin in free space but cannot advance through the actual exit blocker")
+            }
+        }
         testing.expect(t, w.requested == w.spawned+w.pending && w.spawned == w.completed+len(w.vehicles))
     }
     testing.expect(t, w.pending > 0 && w.completed == 0)
@@ -100,8 +106,7 @@ test_blocked_exit_pending_and_recovery :: proc(t: ^testing.T) {
     w.spawns[0].interval = 86400
     w.spawn_runtime[0].elapsed = 0
     w.roads[1].speed_limit = 8
-    // One-body node serialization takes about five seconds per queued car;
-    // this finite drain horizon includes the whole fifty-car pending backlog.
+    // This finite drain horizon includes the whole fifty-car pending backlog.
     for _ in 0..<8000 {
         step(&w, 0.05)
         expect_bodies_clear(t, &w)

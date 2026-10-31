@@ -86,6 +86,12 @@ All paths are relative to the project root. Local copies are **reference/analysi
 - [Direct media](https://upload.wikimedia.org/wikipedia/commons/e/e4/Traffic_light_at_Pasteur%E2%80%93Dien_Bien_Phu%2C_HCMC%2C_2025.jpg)
 - SHA-256: `f2224be29f8dc9d1ebe06070c25004474bcc6386bcf00858bec4bc9718039666`
 
+## Motorcycle-flow video review
+
+- [Saigon (Ho Chi Minh City) traffic from above an intersection, Vietnam](https://www.youtube.com/watch?v=HDu_TwoOM5I), reviewed at **00:10–00:35** with five-second frame samples from the public 640×360 video. The title supplies the city; exact junction, capture date/hour and playback-rate calibration are unverified. This is not a verified off-peak/rush-hour baseline.
+- Visible: motorcycles occupy irregular side-by-side/staggered positions, and several riders traverse the intersection together in streams. This supports removing the simulator's one-owner/conflicting-turn serialization, not a claim that riders never yield or that real traffic cannot gridlock.
+- Implementation response: connector geometry is retained as steering, while whole-path/exit-strip/outgoing-ray ownership is replaced by local body checks and a **synthetic 1.5-second** rolling conflict prediction. That horizon, clearance margin and priority rule are engineering choices, **not measurements from this clip**. General weaving/queue filtering and observed gap/acceleration calibration remain outstanding.
+
 ## Original-image metadata check
 
 The public VnExpress page variants for Bến Thành and Nam Kỳ Khởi Nghĩa are recorded above. Requests for their corresponding JPEG paths **without the published resize/signature query** returned HTTP 401 for both; no original bytes or capture-time metadata were obtained, and no access bypass was attempted. File-name numbers and publication times are not capture-time evidence. Both photos remain hour **UNKNOWN**.

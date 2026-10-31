@@ -3,12 +3,10 @@ package sim
 import "core:math"
 import "core:fmt"
 
-// Reserve through rear clearance. A straight band may also enter when a
-// conservative bound proves it disjoint from a turning owner's remaining path.
-// Other turns/convergences remain exclusive; upgrade to general swept corridors
-// for broader compatible movement batches.
+// A fitted steering guide, not exclusive occupancy of future pavement.
 Connector :: struct {
     active: bool,
+    sequence: u64,
     node, exit: int,
     end, lateral, progress, length: f32,
     start, forward: Vec2,
@@ -109,7 +107,7 @@ fit_connector :: proc(w: ^World, v: Vehicle, exit: int, lateral: f32) -> (c: Con
     // First try the tangent intersection; then shorter handles and delayed
     // mouth entry. Every accepted path uses the exact rendered asphalt union.
     // Steering may need to finish before the front enters a narrow exit. The
-    // straight tail still holds the reservation until the REAR clears it.
+    // straight tail carries the body until its REAR clears the junction.
     early_tail := junction_clearance_distance(w, exit)+kind_length(v.kind)-junction_mouth_depth(w, exit)
     for tail in ([]f32{0, early_tail, early_tail+kind_width(v.kind)*0.5}) {
         for extra in ([]f32{0, kind_width(v.kind)*0.5, kind_width(v.kind), kind_width(v.kind)*1.5, -delay}) {
@@ -121,7 +119,7 @@ fit_connector :: proc(w: ^World, v: Vehicle, exit: int, lateral: f32) -> (c: Con
         }
     }
     // An uncontrolled approach has no zebra: a turning body may begin at its
-    // reserved entry instead of the mouth, if the same pavement test passes.
+    // entry instead of the mouth, if the same pavement test passes.
     // Controlled approaches keep the crossing straight and untouched.
     if signal_state(w, v.road) == .Uncontrolled && f.x*g.y-f.y*g.x != 0 {
         early := max(v.distance, entry_distance(w, v.road, v.kind))-turn_start_distance(w, v.road)
@@ -168,7 +166,7 @@ connector_candidate :: proc(w: ^World, v: Vehicle, exit: int, lateral, delay, fa
     turn += delay
     parallel_shift := abs(cross) <= 0.00001 && abs((q.x-start.x)*f.y-(q.y-start.y)*f.x) > 0.00001
     // No zebra exists here: an uncontrolled width/lateral convergence may
-    // start at its reserved approach, rather than waiting too late at the mouth.
+    // start at its approach, rather than waiting too late at the mouth.
     if parallel_shift && signal_state(w, v.road) == .Uncontrolled { turn = a.distance+delay }
     turn = max(a.distance, turn)
     if exit < 0 { turn = min(turn, length) }
@@ -230,9 +228,8 @@ body_clear :: proc(w: ^World, candidate: Vehicle, ignore: int = -1) -> bool {
     return true
 }
 
-// Exact collinearity is deliberately restrictive: uncertain/skew control
-// polygons serialize rather than treating a sampled almost-straight turn as a
-// rigid corridor. Monotone projections also exclude a reversing control polygon.
+// Exact collinearity selects straight speed targets, not crossing permission.
+// Monotone projections also exclude a reversing control polygon.
 straight_direction :: proc(c: Connector) -> (forward: Vec2, straight: bool) {
     start := c.start
     end := Vec2{c.controls[3].x+c.outgoing.x*c.tail, c.controls[3].y+c.outgoing.y*c.tail}
@@ -262,67 +259,6 @@ straight_corridors_disjoint :: proc(a: Connector, ak: Vehicle_Kind, b: Connector
     return parallel_bands_disjoint(a.start, af, kind_width(ak), b.start, bf, kind_width(bk))
 }
 
-// The remaining cubic lies in its split control polygon's convex hull. Project
-// that hull, the remaining lead/tail, and the outgoing ray onto the straight
-// candidate's normal; inflate by the owner's body half-diagonal at every angle.
-remaining_corridor_disjoint :: proc(candidate: Connector, ck: Vehicle_Kind, owner: Connector, ok: Vehicle_Kind) -> bool {
-    if owner.tail <= 0 { return false }
-    forward, straight := straight_direction(candidate)
-    _, owner_straight := straight_direction(owner)
-    if !straight || owner_straight { return false }
-    nx, ny := -f64(forward.y), f64(forward.x)
-    origin_x, origin_y := f64(candidate.start.x), f64(candidate.start.y)
-    current, _ := connector_pose(owner, owner.progress)
-    finish, _ := connector_pose(owner, owner.length)
-    a := (f64(current.x)-origin_x)*nx+(f64(current.y)-origin_y)*ny
-    b := (f64(finish.x)-origin_x)*nx+(f64(finish.y)-origin_y)*ny
-    low, high := min(a, b), max(a, b)
-    scale := max(f64(1), abs(origin_x), abs(origin_y), abs(f64(current.x)), abs(f64(current.y)), abs(f64(finish.x)), abs(f64(finish.y)))
-    if owner.progress < owner.lead+owner.arc[64] {
-        t: f32
-        if owner.progress > owner.lead {
-            distance := owner.progress-owner.lead
-            for i in 1..<len(owner.arc) {
-                if distance <= owner.arc[i] {
-                    t = (f32(i-1)+(distance-owner.arc[i-1])/max(0.000001, owner.arc[i]-owner.arc[i-1]))/64
-                    break
-                }
-            }
-        }
-        projected: [4]f64
-        for point, i in owner.controls {
-            projected[i] = (f64(point.x)-origin_x)*nx+(f64(point.y)-origin_y)*ny
-            scale = max(scale, abs(f64(point.x)), abs(f64(point.y)))
-        }
-        // Scalar de Casteljau splitting is equivalent to projecting the 2D hull.
-        u := f64(t)
-        p := projected
-        p01, p12, p23 := p[0]+(p[1]-p[0])*u, p[1]+(p[2]-p[1])*u, p[2]+(p[3]-p[2])*u
-        p012, p123 := p01+(p12-p01)*u, p12+(p23-p12)*u
-        split := p012+(p123-p012)*u
-        low = min(low, split, p123, p23, p[3])
-        high = max(high, split, p123, p23, p[3])
-    }
-    // Runtime poses use f32. Inflate by 84 f32 epsilons at the coordinate
-    // scale; this can reject safe paths on very large maps, but never shrinks
-    // the clearance for a fixed world position. Upgrade to interval arithmetic
-    // before treating this as a numerical proof for arbitrary coordinates.
-    radius := f64(0.5*math.sqrt(kind_length(ok)*kind_length(ok)+kind_width(ok)*kind_width(ok))+0.5*kind_width(ck)+0.18)+0.0001+0.00001*scale
-    outward := f64(owner.outgoing.x)*nx+f64(owner.outgoing.y)*ny
-    return (low > radius && outward >= 0) || (high < -radius && outward <= 0)
-}
-
-receiving_reserved :: proc(w: ^World, road: int, distance: f32, kind: Vehicle_Kind, lateral: f32) -> bool {
-    for v in w.vehicles {
-        c := v.motion
-        if !c.active || c.exit != road || distance-kind_length(kind)*0.5 >= c.end+kind_length(v.kind)*0.5+1.2 { continue }
-        forward, straight := straight_direction(c)
-        if !straight { return true } // A curve still reserves the full receiving strip.
-        point, heading := vehicle_pose(w, Vehicle{road = road, distance = distance, lateral = lateral})
-        if !parallel_bands_disjoint(c.start, forward, kind_width(v.kind), point, heading, kind_width(kind)) { return true }
-    }
-    return false
-}
 
 source_problem :: proc(w: ^World, v: Vehicle) -> Motion_Problem {
     exit := successor(w, v)
@@ -379,7 +315,7 @@ connector_laterals :: proc(w: ^World, v: Vehicle, exit: int) -> [dynamic]f32 {
     desired := clamp(v.preferred_lateral, -limit, limit)
     candidates := make([dynamic]f32, 0, 2*len(w.vehicles)+3)
     // Preserve an occupied world-space band across aligned links when it fits.
-    // Fitting, reservations and body checks still decide whether it is usable.
+    // Fitting, local gaps and body checks still decide whether it is usable.
     if exit >= 0 {
         _, incoming := vehicle_pose(w, Vehicle{road = v.road})
         _, outgoing := vehicle_pose(w, Vehicle{road = exit})
@@ -398,11 +334,58 @@ connector_laterals :: proc(w: ^World, v: Vehicle, exit: int) -> [dynamic]f32 {
     return candidates
 }
 
+// Predict only nearby motion, not ownership of a turn or an outgoing ray.
+// An uncommitted vehicle never gets forecast through a signal/next junction.
+forecast_vehicle :: proc(w: ^World, v: Vehicle, distance: f32) -> Vehicle {
+    trial := v
+    left := distance
+    if trial.motion.active {
+        amount := min(left, trial.motion.length-trial.motion.progress)
+        trial.motion.progress += amount
+        left -= amount
+        if trial.motion.progress < trial.motion.length || trial.motion.exit < 0 { return trial }
+        trial.road, trial.distance, trial.lateral = trial.motion.exit, trial.motion.end, trial.motion.lateral
+        trial.motion = {}
+    }
+    trial.distance += min(left, max(0, entry_distance(w, trial.road, trial.kind)-trial.distance))
+    if trial.lane.active { trial.lateral, _ = lane_offset(trial) }
+    return trial
+}
+
+// Synthetic 1.5s rolling gap acceptance. Older entrants have tie priority at
+// an imminent conflict, not a claim on their remaining route. Physical bodies
+// always block regardless of priority. O(n * horizon / 0.05s), capped at 120;
+// use a spatial neighbor index before increasing the population.
+// This constant-speed prediction is not a collision/deadlock proof.
+local_gap_clear :: proc(w: ^World, candidate: Vehicle, ignore: int, speed: f32) -> bool {
+    horizon :: f32(1.5)
+    for other, j in w.vehicles {
+        if j == ignore { continue }
+        // Same-link followers already yield through longitudinal following.
+        // Extrapolating them through the departing body would veto escape.
+        if other.road == candidate.road && !other.motion.active && !other.lane.active &&
+            other.distance < candidate.distance && abs(other.lateral-candidate.lateral) < (kind_width(other.kind)+kind_width(candidate.kind))*0.5+0.18 { continue }
+        if other.motion.active && candidate.motion.sequence != 0 &&
+            other.motion.sequence > candidate.motion.sequence { continue }
+        // Observe stopped traffic as stopped. Inventing forward creep for
+        // a blocked rider can prevent the crossing rider from clearing it.
+        other_speed := other.speed
+        p, _ := vehicle_pose(w, candidate)
+        q, _ := vehicle_pose(w, other)
+        reach := (speed+other_speed)*horizon+kind_length(candidate.kind)+kind_length(other.kind)
+        if vec_distance(p, q) > reach { continue }
+        for k in 1..=30 {
+            time := f32(k)*0.05
+            a := forecast_vehicle(w, candidate, speed*time)
+            b := forecast_vehicle(w, other, other_speed*time)
+            if bodies_overlap(w, a, b) { return false }
+        }
+    }
+    return true
+}
+
 acquire_connector :: proc(w: ^World, i, exit: int) -> bool {
     v := w.vehicles[i]
-    node := w.roads[v.road].to
-    // O(n^2) trial packing is bounded by the 120 vehicle cap; replace with a
-    // corridor index before scaling the population, not a separate pose model.
     candidates := connector_laterals(w, v, exit)
     defer delete(candidates)
     if len(candidates) == 0 { report_motion_issue(w, v, exit, .Short_Exit); return false }
@@ -412,33 +395,15 @@ acquire_connector :: proc(w: ^World, i, exit: int) -> bool {
         if problem == .Tight_Turn { unfit = true; continue }
         if problem != .None { report_motion_issue(w, v, exit, problem); return false }
         geometry_found = true
-        clear := true
-        for other, j in w.vehicles {
-            if i != j && other.motion.active && other.motion.node == node && !straight_corridors_disjoint(c, v.kind, other.motion, other.kind) && !remaining_corridor_disjoint(c, v.kind, other.motion, other.kind) {
-                clear = false
-                break
-            }
-        }
-        if !clear { continue }
-        if exit >= 0 && receiving_reserved(w, exit, 0, v.kind, lateral) { continue }
-        // Reserve the receiving corridor, including the rear and a following gap.
-        for other, j in w.vehicles {
-            if i == j { continue }
-            if other.road == exit && !other.motion.active && other.distance-kind_length(other.kind)*0.5 < c.end+kind_length(v.kind)*0.5+1.2 &&
-                (other.lane.active || abs(other.lateral-lateral) < (kind_width(v.kind)+kind_width(other.kind))*0.5+0.18) { clear = false; break }
-        }
-        if !clear { continue }
+        c.sequence = w.entry_sequence+1
         trial := v
         trial.motion = c
-        // Spatial sampling is conservative gameplay collision avoidance, not a
-        // proof for arbitrary overlapping OSM junctions. Runtime checks also
-        // cover moving bodies; unsupported short mouths are diagnosed above.
-        samples := max(1, int(math.ceil(c.length/0.20)))
-        for k in 0..=samples {
-            trial.motion.progress = c.length*f32(k)/f32(samples)
-            if !body_clear(w, trial, i) { clear = false; break }
-        }
-        if clear { w.vehicles[i].motion = c; return true }
+        // Keep the first geometrically usable band. A temporary conflict is
+        // a reason to yield, not to cut across neighboring riders' bands.
+        if !body_clear(w, trial, i) || !local_gap_clear(w, trial, i, v.speed) { return false }
+        w.entry_sequence += 1
+        w.vehicles[i].motion = c
+        return true
     }
     if unfit && !geometry_found { report_motion_issue(w, v, exit, .Tight_Turn) }
     return false
@@ -475,7 +440,7 @@ move_vehicle :: proc(w: ^World, i: int, budget: f32) -> (travelled: f32, finishe
             trial.distance += amount
             if trial.lane.active {
                 trial.lateral, _ = lane_offset(trial)
-                if receiving_reserved(w, trial.road, trial.distance, trial.kind, trial.lateral) { break }
+                if !local_gap_clear(w, trial, i, v.speed) { break }
                 if trial.distance >= trial.lane.start+LANE_CHANGE_LENGTH { trial.lane = {} }
             }
             if !body_clear(w, trial, i) { break }
@@ -486,7 +451,7 @@ move_vehicle :: proc(w: ^World, i: int, budget: f32) -> (travelled: f32, finishe
             amount := min(left, min(0.1, v.motion.length-v.motion.progress))
             trial := v
             trial.motion.progress += amount
-            if !body_clear(w, trial, i) { break }
+            if !body_clear(w, trial, i) || !local_gap_clear(w, trial, i, v.speed) { break }
             if trial.motion.progress >= trial.motion.length-0.000001 {
                 if trial.motion.exit < 0 { return travelled+amount, true }
                 trial.road, trial.distance, trial.lateral = trial.motion.exit, trial.motion.end, trial.motion.lateral

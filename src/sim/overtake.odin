@@ -26,6 +26,10 @@ lane_rear_safe :: proc(w: ^World, i: int, v: Vehicle, predictive: bool) -> bool 
         // A straight follower in the occupied band is already held behind by
         // longitudinal following; it must not veto departure indefinitely.
         if !other.motion.active && !other.lane.active && abs(other.lateral-v.lane.from) < (kind_width(other.kind)+kind_width(v.kind))*0.5+0.18 { continue }
+        // Once a straight follower is yielding in the currently occupied band,
+        // do not let the rear-gap buffer deadlock both vehicles. Actual body
+        // checks still protect each movement; admission remains predictive.
+        if !predictive && !other.motion.active && !other.lane.active && other.speed <= v.speed && abs(other.lateral-v.lateral) < (kind_width(other.kind)+kind_width(v.kind))*0.5+0.18 { continue }
         other_radius := 0.5*math.sqrt(kind_length(other.kind)*kind_length(other.kind)+kind_width(other.kind)*kind_width(other.kind))
         low, high := min(v.lateral, v.lane.to)-radius, max(v.lateral, v.lane.to)+radius
         other_low, other_high := other.lateral-other_radius, other.lateral+other_radius
@@ -54,9 +58,6 @@ try_overtake :: proc(w: ^World, i: int) {
     radius := 0.5*math.sqrt(kind_length(v.kind)*kind_length(v.kind)+kind_width(v.kind)*kind_width(v.kind))
     if v.distance-radius <= junction_setback(w, v.road, true, true)+1+CROSSING_DEPTH { return }
     if v.distance+LANE_CHANGE_LENGTH+radius >= entry_distance(w, v.road, v.kind) { return }
-    // A receiving connector owns its strip until rear clearance. Serialize
-    // lateral steering against it rather than underestimating a rotated body.
-    for other in w.vehicles { if other.motion.active && other.motion.exit == v.road { return } }
     // Do not start a second maneuver behind one still changing bands.
     for other in w.vehicles { if other.lane.active && other.road == v.road && other.distance >= v.distance && other.distance-v.distance < 35 { return } }
     target := min(w.roads[v.road].speed_limit, kind_speed(v.kind))*v.driver.traits.speed_factor
@@ -88,7 +89,7 @@ try_overtake :: proc(w: ^World, i: int) {
             trial := candidate
             trial.distance = v.distance+f32(k)*0.1
             trial.lateral, _ = lane_offset(trial)
-            if receiving_reserved(w, trial.road, trial.distance, trial.kind, trial.lateral) || !body_clear(w, trial, i) { clear = false; break }
+            if !body_clear(w, trial, i) || !local_gap_clear(w, trial, i, v.speed) { clear = false; break }
         }
         if clear { w.vehicles[i].lane = candidate.lane; w.vehicles[i].driver.mode = .Passing; return }
     }

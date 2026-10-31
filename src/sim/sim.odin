@@ -40,6 +40,7 @@ World :: struct {
     // Deduplicated unsupported transitions; other roads continue running.
     motion_issues: [dynamic]Motion_Issue,
     fit_cache: map[Motion_Key]Motion_Fit,
+    entry_sequence: u64,
 }
 
 kind_width :: proc(kind: Vehicle_Kind) -> f32 {
@@ -140,10 +141,9 @@ free_lateral :: proc(w: ^World, road_id: int, distance: f32, kind: Vehicle_Kind,
     if abs(lateral) + kind_width(kind)*0.5 > half { return false }
     state := signal_state(w, road_id)
     if (state == .Red || state == .Amber) && distance + kind_length(kind)*0.5 > w.stop_lines[road_id] { return false }
-    if receiving_reserved(w, road_id, distance, kind, lateral) { return false }
     if !body_clear(w, Vehicle{road = road_id, distance = distance, lateral = lateral, kind = kind}) { return false }
     for other in w.vehicles {
-        if other.road != road_id || abs(other.distance-distance) > (kind_length(kind)+kind_length(other.kind))*0.5 + 1.2 { continue }
+        if other.motion.active || other.road != road_id || abs(other.distance-distance) > (kind_length(kind)+kind_length(other.kind))*0.5 + 1.2 { continue }
         if abs(other.lateral-lateral) < (kind_width(kind)+kind_width(other.kind))*0.5 + 0.18 { return false }
     }
     return true
@@ -156,7 +156,7 @@ fitting_lateral :: proc(w: ^World, road_id: int, kind: Vehicle_Kind, desired: f3
     // Free intervals begin at a body boundary or a road edge. Test each boundary;
     // O(n^2) per transition, O(n^3) worst-case per tick; replace with sorted intervals.
     for other in w.vehicles {
-        if other.road != road_id || abs(other.distance) > (kind_length(kind)+kind_length(other.kind))*0.5 + 1.2 { continue }
+        if other.motion.active || other.road != road_id || abs(other.distance) > (kind_length(kind)+kind_length(other.kind))*0.5 + 1.2 { continue }
         gap := (kind_width(kind)+kind_width(other.kind))*0.5 + 0.18
         left, right := other.lateral-gap-0.00001, other.lateral+gap+0.00001
         if left >= -limit && left <= limit && free_lateral(w, road_id, 0, kind, left) { return left, true }
@@ -271,12 +271,6 @@ step_tick :: proc(w: ^World, dt: f32) {
                 distance := max(0, entry_distance(w, v.road, v.kind)-v.distance)
                 target = min(target, math.sqrt(exit_target*exit_target+8*distance))
             }
-            for lead, j in w.vehicles {
-                if i == j || lead.road != v.road || lead.distance <= v.distance { continue }
-                if abs(lead.lateral-v.lateral) >= (kind_width(lead.kind)+kind_width(v.kind))*0.5+0.18 { continue }
-                gap := lead.distance-v.distance-(kind_length(lead.kind)+kind_length(v.kind))*0.5
-                if gap < 1+v.speed*headway { target = min(target, max(0, lead.speed+max(0, gap)*0.7)) }
-            }
             stop := entry_distance(w, v.road, v.kind)
             state := signal_state(w, v.road)
             if (state == .Red || state == .Amber) && v.distance <= stop+0.0001 {
@@ -287,16 +281,20 @@ step_tick :: proc(w: ^World, dt: f32) {
         acceleration := f32(2)
         if w.behavior.enabled { acceleration = v.driver.traits.acceleration }
         if speed < target { speed = min(target, speed+acceleration*dt) } else { speed = max(target, speed-4*dt) }
+        speed = max(0, min(speed, v.speed+following_acceleration(w, v, i, headway, acceleration)*dt))
         budget := speed*dt
         if !v.motion.active {
             for lead, j in w.vehicles {
-                if i == j || lead.road != v.road || lead.distance <= v.distance { continue }
+                if i == j || lead.motion.active || lead.road != v.road || lead.distance <= v.distance { continue }
                 if abs(lead.lateral-v.lateral) < (kind_width(lead.kind)+kind_width(v.kind))*0.5+0.18 {
                     gap := lead.distance-v.distance-(kind_length(lead.kind)+kind_length(v.kind))*0.5-0.05
                     budget = min(budget, max(0, gap))
                 }
             }
         }
+        // Forecast this tick's intended speed, not an invented minimum pace.
+        // Movement may still be curtailed by emergency physical checks.
+        w.vehicles[i].speed = speed
         travelled, finished := move_vehicle(w, i, budget)
         if finished {
             w.completed += 1

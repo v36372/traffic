@@ -1,6 +1,7 @@
 package showcase_test
 
 import "core:testing"
+import "core:fmt"
 import sim ".."
 import mapdata "../../mapdata"
 
@@ -68,17 +69,27 @@ test_busy_showcase_capture_window :: proc(t: ^testing.T) {
     testing.expect(t, sim.configure(&w, signals[:], sources[:]))
     testing.expect(t, sim.configure_drivers(&w, drivers))
     max_owners := 0
+    max_turns, moving_turn_ticks := 0, 0
+    previous := make(map[u64]f32)
+    defer delete(previous)
     for tick in 0..<1940 {
         sim.step(&w, 0.05)
-        owners := 0
+        owners, turns, moving_turns := 0, 0, 0
         for a, i in w.vehicles {
             if a.motion.active && a.motion.node == w.roads[6].to { owners += 1 }
+            if tick >= 1760 && tick < 1920 && a.road == 6 && a.motion.active && a.motion.exit == 25 {
+                turns += 1
+                if old, found := previous[a.id]; found && a.motion.progress > old+0.001 { moving_turns += 1 }
+            }
+            if a.motion.active { previous[a.id] = a.motion.progress }
             for b in w.vehicles[i+1:] { testing.expect(t, !sim.bodies_overlap(&w, a, b, 0)) }
         }
+        if tick >= 1760 && tick < 1920 { max_turns = max(max_turns, turns); if moving_turns >= 2 { moving_turn_ticks += 1 } }
         testing.expect(t, w.spawned == w.completed+len(w.vehicles) && w.requested == w.spawned+w.pending)
         if tick >= 1740 { max_owners = max(max_owners, owners) }
     }
     testing.expect(t, max_owners >= 2, "busy capture window must demonstrate parallel discharge at the focused junction")
+    testing.expect(t, moving_turn_ticks > 0, fmt.tprintf("88-96s replay: max concurrent 6->25 turns=%d ticks with multiple moving=%d", max_turns, moving_turn_ticks))
 }
 
 @(test)

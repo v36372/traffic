@@ -4,7 +4,7 @@ package sim
 // baseline speed. Headway changes preference, not physical body clearance.
 Driver_Range :: struct { speed_min, speed_max, headway_min, headway_max: f32 }
 Driver_Persona :: enum { Balanced, Cautious, Assertive }
-Driver_Mode :: enum { Cruising, Following, Stopped_Signal, Passing, Junction }
+Driver_Mode :: enum { Cruising, Following, Stopped_Signal, Passing, Junction, Following_Junction }
 Driver :: struct {
     traits: Driver_Traits,
     persona: Driver_Persona,
@@ -65,11 +65,45 @@ passing_advantage :: proc(d: Driver) -> f32 {
     return threshold
 }
 
+// Synthetic damped gap/closing-speed control, shared by links and connectors.
+// Personal acceleration is a ceiling, not a command to accelerate into a queue.
+// A local tangent projection sees aligned bodies, not a claim on future paths;
+// sharp turns/crossing traffic still use local gaps and actual body clearance.
+// Project onto fitted path arcs before extending this to tighter-turn following.
+following_acceleration :: proc(w: ^World, v: Vehicle, ignore: int, headway, preferred: f32) -> f32 {
+    p, f := vehicle_pose(w, v)
+    gap, lead_speed := f32(35), f32(0)
+    found := false
+    for other, j in w.vehicles {
+        if j == ignore { continue }
+        q, g := vehicle_pose(w, other)
+        alignment := f.x*g.x+f.y*g.y
+        if alignment < 0.8 { continue }
+        dx, dy := q.x-p.x, q.y-p.y
+        along := dx*f.x+dy*f.y
+        if along <= 0 { continue }
+        skew := abs(f.x*g.y-f.y*g.x)
+        half_width := (kind_width(v.kind)+alignment*kind_width(other.kind)+skew*kind_length(other.kind))*0.5
+        if abs(dx*f.y-dy*f.x) >= half_width+0.025 { continue }
+        clearance := along-(kind_length(v.kind)+alignment*kind_length(other.kind)+skew*kind_width(other.kind))*0.5
+        if clearance >= gap { continue }
+        gap, lead_speed, found = clearance, other.speed*alignment, true
+    }
+    if !found { return preferred }
+    // 0.5m standstill space and >=0.4s response are synthetic preferences.
+    response := max(0.4, headway)
+    desired_gap := 0.5+v.speed*response
+    adjustment := 2*(lead_speed-v.speed)/response+(gap-desired_gap)/(response*response)
+    return clamp(adjustment, -4, preferred)
+}
+
 // Recompute from physical observations; maneuver state has priority over following.
 update_driver_mode :: proc(w: ^World, i: int) {
     v := w.vehicles[i]
     mode := Driver_Mode.Cruising
-    if v.motion.active { mode = .Junction
+    if v.motion.active {
+        mode = .Junction
+        if !local_gap_clear(w, v, i, v.speed) { mode = .Following_Junction }
     } else if v.lane.active { mode = .Passing
     } else if (signal_state(w, v.road) == .Red || signal_state(w, v.road) == .Amber) && v.speed < 0.1 && v.distance >= entry_distance(w, v.road, v.kind)-0.2 { mode = .Stopped_Signal
     } else {
