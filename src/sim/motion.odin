@@ -94,6 +94,19 @@ fit_connector :: proc(w: ^World, v: Vehicle, exit: int, lateral: f32) -> (c: Con
     left := f.x*g.y-f.y*g.x > 0
     delay: f32
     if left { delay = kind_length(v.kind)*0.5 }
+    // On an uncontrolled left turn, start the diagonal approach at the
+    // entry line when the whole body fits; rolling gap checks can then stop
+    // the driver partway through the turn for opposing traffic.
+    if left && signal_state(w, v.road) == .Uncontrolled {
+        early := max(v.distance, entry_distance(w, v.road, v.kind))-turn_start_distance(w, v.road)
+        candidate, why := connector_candidate(w, v, exit, lateral, early, 1, 0)
+        if why == .None {
+            hull := junction_polygon(w, w.roads[v.road].to)
+            fits := connector_on_pavement(w, candidate, v.kind, hull[:])
+            delete(hull)
+            if fits { return candidate, .None }
+        }
+    }
     c, problem = connector_candidate(w, v, exit, lateral, delay, 1, 0)
     if problem != .None && problem != .Tight_Turn { return }
     // Only explicit uncontrolled single-arm map endpoints retain the old
@@ -210,20 +223,27 @@ connector_candidate :: proc(w: ^World, v: Vehicle, exit: int, lateral, delay, fa
 bodies_overlap :: proc(w: ^World, a, b: Vehicle, margin: f32 = 0.025) -> bool {
     p, f := vehicle_pose(w, a)
     q, g := vehicle_pose(w, b)
+    return body_poses_overlap(p, f, a.kind, q, g, b.kind, margin)
+}
+
+body_poses_overlap :: proc(p, f: Vec2, a: Vehicle_Kind, q, g: Vec2, b: Vehicle_Kind, margin: f32 = 0.025) -> bool {
     axes := [4]Vec2{f, {-f.y, f.x}, g, {-g.y, g.x}}
-    radius := (kind_length(a.kind)+kind_width(a.kind)+kind_length(b.kind)+kind_width(b.kind))*0.5+margin
+    radius := (kind_length(a)+kind_width(a)+kind_length(b)+kind_width(b))*0.5+margin
     if (q.x-p.x)*(q.x-p.x)+(q.y-p.y)*(q.y-p.y) > radius*radius { return false }
     for axis in axes {
         separation := abs((q.x-p.x)*axis.x+(q.y-p.y)*axis.y)
-        ra := kind_length(a.kind)*0.5*abs(f.x*axis.x+f.y*axis.y)+kind_width(a.kind)*0.5*abs(-f.y*axis.x+f.x*axis.y)
-        rb := kind_length(b.kind)*0.5*abs(g.x*axis.x+g.y*axis.y)+kind_width(b.kind)*0.5*abs(-g.y*axis.x+g.x*axis.y)
+        ra := kind_length(a)*0.5*abs(f.x*axis.x+f.y*axis.y)+kind_width(a)*0.5*abs(-f.y*axis.x+f.x*axis.y)
+        rb := kind_length(b)*0.5*abs(g.x*axis.x+g.y*axis.y)+kind_width(b)*0.5*abs(-g.y*axis.x+g.x*axis.y)
         if separation >= ra+rb+margin { return false }
     }
     return true
 }
 body_clear :: proc(w: ^World, candidate: Vehicle, ignore: int = -1) -> bool {
+    p, f := vehicle_pose(w, candidate)
     for other, i in w.vehicles {
-        if i != ignore && bodies_overlap(w, candidate, other) { return false }
+        if i == ignore { continue }
+        q, g := vehicle_pose(w, other)
+        if body_poses_overlap(p, f, candidate.kind, q, g, other.kind) { return false }
     }
     return true
 }
@@ -359,6 +379,11 @@ forecast_vehicle :: proc(w: ^World, v: Vehicle, distance: f32) -> Vehicle {
 // This constant-speed prediction is not a collision/deadlock proof.
 local_gap_clear :: proc(w: ^World, candidate: Vehicle, ignore: int, speed: f32) -> bool {
     horizon :: f32(1.5)
+    p, _ := vehicle_pose(w, candidate)
+    // Cache only within this read-only query: sequential arbitration can change
+    // poses between calls. Keep every 50ms prediction and exact body SAT check.
+    poses: [30][2]Vec2
+    predicted := 0
     for other, j in w.vehicles {
         if j == ignore { continue }
         // Same-link followers already yield through longitudinal following.
@@ -370,15 +395,27 @@ local_gap_clear :: proc(w: ^World, candidate: Vehicle, ignore: int, speed: f32) 
         // Observe stopped traffic as stopped. Inventing forward creep for
         // a blocked rider can prevent the crossing rider from clearing it.
         other_speed := other.speed
-        p, _ := vehicle_pose(w, candidate)
-        q, _ := vehicle_pose(w, other)
+        q, g := vehicle_pose(w, other)
         reach := (speed+other_speed)*horizon+kind_length(candidate.kind)+kind_length(other.kind)
         if vec_distance(p, q) > reach { continue }
+        if other_speed == 0 {
+            b := forecast_vehicle(w, other, 0)
+            q, g = vehicle_pose(w, b)
+        }
         for k in 1..=30 {
             time := f32(k)*0.05
-            a := forecast_vehicle(w, candidate, speed*time)
-            b := forecast_vehicle(w, other, other_speed*time)
-            if bodies_overlap(w, a, b) { return false }
+            index := k-1 if speed != 0 else 0
+            if index >= predicted {
+                a := forecast_vehicle(w, candidate, speed*time)
+                poses[index][0], poses[index][1] = vehicle_pose(w, a)
+                predicted = index+1
+            }
+            if other_speed != 0 {
+                b := forecast_vehicle(w, other, other_speed*time)
+                q, g = vehicle_pose(w, b)
+            }
+            if body_poses_overlap(poses[index][0], poses[index][1], candidate.kind, q, g, other.kind) { return false }
+            if speed == 0 && other_speed == 0 { break } // All 30 samples are identical.
         }
     }
     return true

@@ -5,6 +5,35 @@ import "core:math"
 import "core:path/filepath"
 import sim "../sim"
 
+// Last tick's authoritative poses, keyed by trip ID rather than array index:
+// ordered removals and new admissions must never blend unrelated vehicles.
+Render_Poses :: map[u64][2]Vec3
+
+remember_vehicle_poses :: proc(previous: ^Render_Poses, world: ^sim.World) {
+    clear(previous)
+    for vehicle in world.vehicles {
+        p, f := vehicle_render_pose(world, vehicle)
+        previous[vehicle.id] = {p, f}
+    }
+}
+
+interpolated_vehicle_pose :: proc(world: ^sim.World, vehicle: sim.Vehicle, previous: Render_Poses, alpha: f32) -> (position, forward: Vec3) {
+    position, forward = vehicle_render_pose(world, vehicle)
+    old, found := previous[vehicle.id]
+    if !found || alpha >= 1 { return }
+    if alpha <= 0 { return old[0], old[1] }
+    // Short tick chords are checked by the turn-containment tests. Coarser
+    // ticks/tighter paths would need simulation-path resampling instead.
+    position = old[0]+(position-old[0])*alpha
+    // Interpolate yaw along the shortest arc, including the -pi/pi seam.
+    before := math.atan2(old[1][0], old[1][2])
+    after := math.atan2(forward[0], forward[2])
+    delta := math.atan2(math.sin(after-before), math.cos(after-before))
+    yaw := before+delta*alpha
+    forward = {math.sin(yaw), 0, math.cos(yaw)}
+    return
+}
+
 is_showcase_map :: proc(path: string) -> bool {
     actual, actual_error := filepath.abs(path)
     defer delete(actual)

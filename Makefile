@@ -14,7 +14,7 @@ build/vendor/raylib/.ready: tools/bootstrap_raylib.sh
 
 build: deps maps
 	mkdir -p build
-	$(LOCAL_ODIN) build src/app -out:build/traffic-game $(ODINFLAGS)
+	$(LOCAL_ODIN) build src/app -out:build/traffic-game $(ODINFLAGS) -o:speed
 
 run: build
 	./build/traffic-game

@@ -18,6 +18,8 @@ Frontend_Options :: struct {
     smoke: bool,
     demand_scale: f32,
     warmup: f64, // -1 selects the existing map/smoke default.
+    benchmark: f64, // Wall-clock measurement seconds after 2s of rendering warmup; 0 disables.
+    uncapped: bool,
 }
 
 parse_options :: proc(args: []string) -> (options: Frontend_Options, ok: bool) {
@@ -25,8 +27,9 @@ parse_options :: proc(args: []string) -> (options: Frontend_Options, ok: bool) {
     for i := 0; i < len(args); i += 1 {
         arg := args[i]
         if arg == "--smoke-test" { options.smoke = true; continue }
+        if arg == "--uncapped" { options.uncapped = true; continue }
         switch arg {
-        case "--map", "--screenshot", "--capture-sequence", "--demand-scale", "--warmup":
+        case "--map", "--screenshot", "--capture-sequence", "--demand-scale", "--warmup", "--benchmark":
             if i+1 >= len(args) || args[i+1] == "" || strings.has_prefix(args[i+1], "--") {
                 fmt.eprintf("%s requires a value\n", arg)
                 return options, false
@@ -37,7 +40,7 @@ parse_options :: proc(args: []string) -> (options: Frontend_Options, ok: bool) {
             case "--map": options.map_path = value
             case "--screenshot": options.screenshot = value
             case "--capture-sequence": options.sequence_dir = value
-            case "--demand-scale", "--warmup":
+            case "--demand-scale", "--warmup", "--benchmark":
                 number, valid := strconv.parse_f64(value)
                 if !valid || math.is_nan(number) || math.is_inf(number) {
                     fmt.eprintf("%s requires a finite number\n", arg)
@@ -49,6 +52,12 @@ parse_options :: proc(args: []string) -> (options: Frontend_Options, ok: bool) {
                         return options, false
                     }
                     options.demand_scale = f32(number)
+                } else if arg == "--benchmark" {
+                    if number < 1 || number > 300 {
+                        fmt.eprintln("--benchmark must be 1..300 seconds")
+                        return options, false
+                    }
+                    options.benchmark = number
                 } else {
                     if number < 0 || number > 3600 {
                         fmt.eprintln("--warmup must be 0..3600 seconds (rounded to 50ms ticks)")
@@ -64,6 +73,14 @@ parse_options :: proc(args: []string) -> (options: Frontend_Options, ok: bool) {
     }
     // Sequence capture is always a fixed-clock smoke run; no second flag needed.
     if options.sequence_dir != "" { options.smoke = true }
+    if options.benchmark > 0 && (options.smoke || options.screenshot != "") {
+        fmt.eprintln("--benchmark cannot be combined with smoke or screenshots (capture I/O distorts timing)")
+        return options, false
+    }
+    if options.uncapped && options.smoke {
+        fmt.eprintln("--uncapped is for live play or benchmarks; smoke/capture uses the fixed 60 FPS clock")
+        return options, false
+    }
     return options, true
 }
 
@@ -87,8 +104,11 @@ capture_due :: proc(frame: int) -> bool {
 
 // 60 presentation frames/s and 20 simulation ticks/s share an integer clock.
 // Normal smoke and sequence prefixes must agree; no wall-clock or RNG sampling.
-advance_capture_frame :: proc(world: ^sim.World, frame: int) {
-    if frame%3 == 0 { sim.step(world, f32(TICK)) }
+advance_capture_frame :: proc(world: ^sim.World, frame: int, previous: ^Render_Poses) {
+    if frame%3 == 0 {
+        remember_vehicle_poses(previous, world)
+        sim.step(world, f32(TICK))
+    }
 }
 
 export_screenshot :: proc(path: string) -> bool {

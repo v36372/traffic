@@ -38,6 +38,7 @@ run_frontend :: proc() -> int {
     for arg in os.args[1:] {
         if arg == "--help" || arg == "-h" {
             fmt.println("HCMC Traffic | Phase A technical prototype\nUsage: traffic-game [--map path] [--smoke-test] [--screenshot path.png]\n                   [--demand-scale multiplier] [--warmup seconds] [--capture-sequence DIR]\n\nDefault: authored synthetic neighborhood (build/maps/showcase.csv; required).\nShowcase starts at 60s with a focused west-crossing camera; Home shows the full map.\n--map loads geometry and optional stem-objects.csv signals/demand.\nWithout spawn definitions, demand is random synthetic (not calibrated).\n--demand-scale >0..20 divides configured source intervals; result must stay 0.05..86400s.\nThis is synthetic demand, not measured busy/off-peak counts; requires sources unless scale=1.\n--warmup 0..3600s, rounded to 50ms ticks; default showcase 60s, smoke 20s, otherwise 0s.\n--smoke-test renders 90 fixed-clock frames, then exits; no live controls.\n--screenshot captures frame 90 (creates no parent directories).\n--capture-sequence DIR implies smoke: 600 frames / 10s at 60fps, PNG every 6 frames (10Hz).\nDIR must already exist and be writable; captures frame-0006.png through frame-0600.png.\nUse the same map and warmup for synthetic demand comparisons; camera is unchanged.\n\nWASD/arrows or right drag: pan | Middle drag: orbit | Wheel: zoom\nN: north | Home: full-map overview | Space: pause | +/-: speed (0.25x..8x)\nR: restart current configuration | M: load map (--map path or build/maps/showcase.csv)\nB: synthetic demo (clears objects) | Esc: quit\n\nMap attribution: (c) OpenStreetMap contributors, ODbL\nhttps://www.openstreetmap.org/copyright")
+            fmt.println("\nMeasurements: HUD shows FPS / frame ms.\n--benchmark 1..300: real-clock timed run after 2s render warmup; controls disabled, Esc aborts.\nReports frame-time percentiles and simulation/draw/present timings; no screenshots.\n--uncapped: live play or benchmark without the 60 FPS limiter; not for smoke/capture.\nDesktop/GPU synchronization may still limit FPS; simulation speed is unchanged.")
             return 0
         }
     }
@@ -69,26 +70,34 @@ run_frontend :: proc() -> int {
     speed: f64 = 1
     accumulator: f64
     warmup_scene(&world, showcase, smoke, options.warmup)
+    previous_poses := make(Render_Poses)
+    defer delete(previous_poses)
 
     rl.SetConfigFlags({.WINDOW_RESIZABLE, .MSAA_4X_HINT})
     rl.InitWindow(1280, 800, "HCMC Traffic | Phase A")
     if !rl.IsWindowReady() { fmt.eprintln("Window initialization failed; capture unavailable"); return 1 }
     defer rl.CloseWindow()
     rl.SetWindowMinSize(960, 640)
-    rl.SetTargetFPS(CAPTURE_FPS)
+    rl.SetTargetFPS(0 if options.uncapped else CAPTURE_FPS)
+    samples: [dynamic]Frame_Sample
+    defer delete(samples)
+    benchmark_elapsed: f64
+    benchmark_start := rl.GetTime()
+    previous_end := benchmark_start
     frames := 0
     screenshot_written := false
     for !rl.WindowShouldClose() {
+        frame_start := rl.GetTime()
         // Drop long wall-clock stalls instead of unbounded catch-up (40 ticks/frame
         // at 8x maximum); simulation itself always advances in fixed 50ms steps.
         dt := math.min(rl.GetFrameTime(), 0.25)
         // Smoke runs ignore live desktop controls so their seeded state is reproducible.
-        if !smoke {
-            if rl.IsKeyPressed(.SPACE) { paused = !paused; accumulator = 0 }
+        if !smoke && options.benchmark == 0 {
+            if rl.IsKeyPressed(.SPACE) { paused = !paused } // Preserve the displayed interpolation phase while paused.
             if rl.IsKeyPressed(.EQUAL) || rl.IsKeyPressed(.KP_ADD) { speed = math.min(speed*2, 8) }
             if rl.IsKeyPressed(.MINUS) || rl.IsKeyPressed(.KP_SUBTRACT) { speed = math.max(speed*0.5, 0.25) }
             if rl.IsKeyPressed(.R) {
-                if reset_world(&world) { accumulator = 0 }
+                if reset_world(&world) { accumulator = 0; clear(&previous_poses) }
             }
             scene_changed := false
             if rl.IsKeyPressed(.M) {
@@ -107,17 +116,29 @@ run_frontend :: proc() -> int {
                 view = scene_entry_view(&world, &buildings, showcase && map_mode, f32(rl.GetScreenWidth())/f32(rl.GetScreenHeight()))
                 if map_mode { warmup_scene(&world, showcase, false, options.warmup) }
                 accumulator = 0
+                clear(&previous_poses)
             }
             if rl.IsKeyPressed(.HOME) { view = fit_scene_view(&world, &buildings, f32(rl.GetScreenWidth())/f32(rl.GetScreenHeight())) }
             if rl.IsKeyPressed(.N) { view.yaw = 0 }
             update_view(&view, dt)
         }
+        sim_start := rl.GetTime()
+        ticks := 0
         if smoke {
-            advance_capture_frame(&world, frames+1)
+            advance_capture_frame(&world, frames+1, &previous_poses)
         } else if !paused {
             accumulator += f64(dt)*speed
-            for accumulator >= TICK { sim.step(&world, f32(TICK)); accumulator -= TICK }
+            for accumulator >= TICK {
+                remember_vehicle_poses(&previous_poses, &world)
+                sim.step(&world, f32(TICK))
+                accumulator -= TICK
+                ticks += 1
+            }
         }
+        // Standard fixed-step interpolation renders one tick behind simulation.
+        // Capture uses the same phase on its deterministic 60Hz integer clock.
+        alpha := f32((frames+1)%3)/3 if smoke else f32(accumulator/TICK)
+        draw_start := rl.GetTime()
         camera := view_camera(view)
         near, far := camera_clip_planes(view)
         gl.SetClipPlanes(near, far)
@@ -130,10 +151,26 @@ run_frontend :: proc() -> int {
         draw_buildings(&buildings)
         draw_road_scene(&roads)
         draw_signals(&world, approaches[:])
-        for vehicle in world.vehicles { draw_vehicle(&world, vehicle) }
+        for vehicle in world.vehicles { draw_vehicle(&world, vehicle, previous_poses, alpha) }
         rl.EndMode3D()
         draw_hud(&world, map_mode, map_error, paused, speed, view, buildings.count, showcase, options.demand_scale)
+        present_start := rl.GetTime()
         rl.EndDrawing()
+        frame_end := rl.GetTime()
+        // End-to-end intervals include limiter waits, event polling and frame cleanup;
+        // never use the simulation's clamped dt as a performance measurement.
+        if options.benchmark > 0 && frame_start-benchmark_start >= 2 {
+            sample := Frame_Sample{
+                frame_ms = (frame_end-previous_end)*1000,
+                sim_ms = (draw_start-sim_start)*1000,
+                draw_ms = (present_start-draw_start)*1000,
+                present_ms = (frame_end-present_start)*1000,
+                ticks = ticks,
+            }
+            append(&samples, sample)
+            benchmark_elapsed += sample.frame_ms/1000
+        }
+        previous_end = frame_end
         frames += 1
         if frames == 90 && screenshot != "" {
             screenshot_written = export_screenshot(screenshot)
@@ -145,9 +182,17 @@ run_frontend :: proc() -> int {
         }
         // Formatted HUD text and screenshot path allocations live for one frame.
         free_all(context.temp_allocator)
+        if options.benchmark > 0 && benchmark_elapsed >= options.benchmark { break }
         if smoke && frames >= (SEQUENCE_FRAMES if options.sequence_dir != "" else 90) { break }
     }
     fmt.printf("Frontend closed: frames=%d, sim_time=%.2f, active=%d\n", frames, world.time, len(world.vehicles))
+    if options.benchmark > 0 {
+        print_frame_report(samples[:], options.uncapped)
+        if benchmark_elapsed < options.benchmark {
+            fmt.eprintln("Benchmark incomplete (window closed before requested duration)")
+            return 1
+        }
+    }
     if options.sequence_dir != "" && frames < SEQUENCE_FRAMES {
         fmt.eprintf("Capture sequence incomplete: %d/%d frames\n", frames, SEQUENCE_FRAMES)
         return 1
@@ -282,13 +327,14 @@ wheel :: proc(x, z, radius: f32) {
 vehicle_render_pose :: proc(world: ^sim.World, v: sim.Vehicle) -> (position, forward: Vec3) {
     point, heading := sim.vehicle_pose(world, v)
     // One east/north -> east/up/south conversion; sim already owns lateral and
-    // carriageway offsets as well as junction paths. Never offset/blend again.
+    // carriageway offsets and junction paths. Temporal interpolation happens
+    // only after this conversion; never reapply a spatial/carriageway offset.
     return {point.x, 0, -point.y}, {heading.x, 0, -heading.y}
 }
 
-draw_vehicle :: proc(world: ^sim.World, v: sim.Vehicle) {
+draw_vehicle :: proc(world: ^sim.World, v: sim.Vehicle, previous: Render_Poses, alpha: f32) {
     if v.road < 0 || v.road >= len(world.roads) { return }
-    position, forward := vehicle_render_pose(world, v)
+    position, forward := interpolated_vehicle_pose(world, v, previous, alpha)
     color := vehicle_color(v.kind, v.id)
     width, body_length := sim.kind_width(v.kind), sim.kind_length(v.kind)
     gl.PushMatrix()
@@ -368,9 +414,10 @@ draw_hud :: proc(world: ^sim.World, map_mode, map_error, paused: bool, speed: f6
     rl.DrawText(label, 30, 51, 14, MINT)
     state := "RUN"; if paused { state = "PAUSED" }
     rl.DrawText(fmt.ctprintf("%s %.2gx  %.1fs  |  %d active  %d complete", state, speed, world.time, len(world.vehicles), world.completed), 30, 76, 16, PAPER)
-    rl.DrawRectangle(w-176, 16, 160, 49, INK)
-    rl.DrawText(fmt.ctprintf("LIGHTS %d  QUEUED %d", len(world.signals), world.pending), w-166, 25, 13, PAPER)
-    rl.DrawText(fmt.ctprintf("VIEW %.0fm / Home: fit", view.distance), w-166, 45, 13, MINT)
+    rl.DrawRectangle(w-216, 16, 200, 73, INK)
+    rl.DrawText(fmt.ctprintf("LIGHTS %d  QUEUED %d", len(world.signals), world.pending), w-206, 25, 13, PAPER)
+    rl.DrawText(fmt.ctprintf("VIEW %.0fm / Home: fit", view.distance), w-206, 45, 13, MINT)
+    rl.DrawText(fmt.ctprintf("%d FPS / %.1f ms", rl.GetFPS(), rl.GetFrameTime()*1000), w-206, 65, 14, MINT)
     rl.DrawRectangle(0, h-53, w, 53, INK)
     rl.DrawText("WASD / drag: pan   MMB: orbit   Wheel: zoom   Home: fit   N: north   Space: pause   +/-: speed   R: reset   M: map   B: debug", 16, h-44, 14, PAPER)
     rl.DrawText("(c) OpenStreetMap contributors / ODbL / openstreetmap.org/copyright | Synthetic traffic; crossing paint only, no pedestrian simulation", 16, h-22, 13, MINT)

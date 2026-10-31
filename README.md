@@ -29,6 +29,31 @@ Use `./build/traffic-game --help` for controls without opening a window. Start d
 
 WASD/arrows or right drag pan; middle drag orbits; wheel zooms. Space pauses, +/- changes speed, R resets, M loads the map, B returns to the synthetic scene, Home fits the view, and N faces north. Esc quits.
 
+For uncapped gameplay (higher GPU/CPU usage), run `./build/traffic-game --uncapped`. This removes the game's 60 FPS limiter, not desktop/GPU synchronization; traffic simulation speed stays unchanged. The default remains capped at 60 FPS. Smoke/sequence captures retain their fixed 60 FPS clock.
+
+## Measure frame pacing
+
+The top-right HUD shows FPS and the last frame time. For a repeatable stationary-camera measurement of the normal real-clock loop:
+
+```sh
+make build
+./build/traffic-game --benchmark 15
+./build/traffic-game --benchmark 15 --uncapped
+```
+
+Each run excludes 2 seconds of rendering warmup, measures 15 seconds, prints mean FPS, frame-time p50/p95/p99/max, slow-frame counts (>25/>50 ms), simulation/draw-submission/end-present timings, and exits. Controls are disabled except Esc (aborts with a nonzero exit). Duration accepts 1..300 seconds. Keep the window visible and avoid competing workloads; compare the same map, demand, warmup, window size and build flags. `--uncapped` removes only the game's 60 FPS limiter, not desktop/GPU synchronization. Screenshots/smoke capture are rejected because their fixed clock and disk I/O are not gameplay performance.
+
+60 FPS is a 16.67 ms frame budget; tail frame times reveal hitches hidden by an average. End/present includes batch flush, swap, limiter wait and input polling, **not isolated GPU time**. Physics runs at **20 Hz**, but vehicle positions and shortest-arc headings are **interpolated every rendered frame**. Presentation trails simulation by one tick (50 ms at 1×), without predicting through queues or changing physics. Pause freezes the displayed phase; reset/map changes clear history. These measurements do not certify compositor/display presentation timing.
+
+Local measurements (Radeon 780M, 1280×800, 4× MSAA, powersave CPU governor; live desktop, not a controlled hardware benchmark):
+
+| 15-second run | Original FPS / p99 ms | Optimized FPS / p99 ms |
+| --- | ---: | ---: |
+| Default demand | 54.94 / 38.19 | 60.00 / 16.71 |
+| 2× demand, 120 active | 36.55 / 69.32 | 57.87 / 24.77 |
+
+`make build` now uses `-o:speed` instead of Odin's default minimal optimization. Collision queries reuse candidate poses/forecasts within each read-only call and avoid repeating identical stopped/stopped predictions; no forecast samples, collision margins or safety gates were removed. An instrumented pre-change simulation replay attributed about 59% of simulation time to `local_gap_clear` and 27% to `body_clear` at 2× demand (not percentages of total frame time). A frozen-baseline comparison matched every vehicle field after every tick for 1,540 ticks at each demand level. The committed `collision_queries_test.odin` compares optimized queries to uncached predictions, alongside existing collision/containment tests. Raw local evidence: `build/performance-final-{capped,busy}.log`, `build/performance-function-profile.log`, `build/performance-identical.log`. These timings precede presentation interpolation; dense traffic still hitches.
+
 ## Visual review
 
 `make capture` renders a reproducible map screenshot to `build/visual/current.png`. Run `python3 tools/visual_reference.py` to pin an official Cities: Skylines reference, then ask the agent to execute `tools/visual_judge.js` through Pi codemode. The report records image hashes, model, confidence, criterion scores and the next visual priority. See [the repeatable review workflow](docs/VISUAL_REVIEW.md).
@@ -64,7 +89,7 @@ mkdir -p build/capture-busy
 ./build/traffic-game --map build/maps/showcase.csv --demand-scale 2 --warmup 87 --capture-sequence build/capture-busy
 ```
 
-This captures 100 frames over 10 simulated seconds, spanning a green release. Use `--demand-scale 0.25` and a different directory for the quieter synthetic comparison. These multipliers are not measured HCMC demand. `odin run tools/check_capture` replays the same benchmark and emits focused-node vehicle poses as CSV; it does not manipulate the rendered scene.
+This captures 100 frames over 10 simulated seconds, spanning a green release. Captures use the same interpolation as gameplay: at each exported frame the displayed vehicles trail the simulation/HUD clock by 50 ms. Use `--demand-scale 0.25` and a different directory for the quieter synthetic comparison. These multipliers are not measured HCMC demand. `odin run tools/check_capture` replays the same benchmark and emits focused-node **simulation-tick** vehicle poses as CSV (not delayed presentation poses); it does not manipulate the rendered scene.
 
 Crosswalk paint now exists, but pedestrian behavior does not. Opt-in seeded speed and headway preferences are available in authored XML; filtering and deliberate infractions are [not implemented](docs/DRIVER_BEHAVIOR.md). See [current verified status](docs/STATUS.md).
 

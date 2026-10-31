@@ -23,21 +23,31 @@ test_authored_turn_bodies_stay_on_actual_asphalt_union :: proc(t: ^testing.T) {
                 connector, problem := sim.make_connector(&world, vehicle, exit, 0)
                 if !testing.expect(t, problem == .None, fmt.tprintf("connector unsupported: widths=%v kind=%v exit=%d reason=%v", widths, kind, exit, problem)) { continue }
                 vehicle.motion = connector
+                previous := make(Render_Poses)
+                defer delete(previous)
                 samples := int(math.ceil(connector.length/0.1))
                 contained := true
                 for step in 0..=samples {
                     vehicle.motion.progress = connector.length*f32(step)/f32(samples)
-                    p, f := sim.vehicle_pose(&world, vehicle)
-                    for along in ([]f32{-0.5, 0, 0.5}) {
-                        for across in ([]f32{-0.5, 0, 0.5}) {
-                            if along == 0 && across == 0 { continue }
-                            longitudinal, lateral := along*sim.kind_length(kind), across*sim.kind_width(kind)
-                            // All four body corners + all four edge centers.
-                            point := Vec3{p.x+f.x*longitudinal-f.y*lateral, 0, -(p.y+f.y*longitudinal+f.x*lateral)}
-                            if !testing.expect(t, road_point_covered(&scene, 2, point), fmt.tprintf("OFF ASPHALT widths=%v kind=%v exit=%d progress=%.4f/%.4f corner=(%.1f,%.1f) point=(%.5f,%.5f)", widths, kind, exit, vehicle.motion.progress, connector.length, along, across, point[0], -point[2])) {
-                                contained = false
-                                break
+                    before := vehicle
+                    before.motion.progress = math.max(0, vehicle.motion.progress-sim.kind_speed(kind)*f32(TICK))
+                    p0, f0 := vehicle_render_pose(&world, before)
+                    previous[vehicle.id] = {p0, f0}
+                    for alpha in ([]f32{0, 1.0/3, 2.0/3, 1}) {
+                        point, heading := interpolated_vehicle_pose(&world, vehicle, previous, alpha)
+                        p, f := sim.Vec2{point[0], -point[2]}, sim.Vec2{heading[0], -heading[2]}
+                        for along in ([]f32{-0.5, 0, 0.5}) {
+                            for across in ([]f32{-0.5, 0, 0.5}) {
+                                if along == 0 && across == 0 { continue }
+                                longitudinal, lateral := along*sim.kind_length(kind), across*sim.kind_width(kind)
+                                // All four body corners + all four edge centers.
+                                point := Vec3{p.x+f.x*longitudinal-f.y*lateral, 0, -(p.y+f.y*longitudinal+f.x*lateral)}
+                                if !testing.expect(t, road_point_covered(&scene, 2, point), fmt.tprintf("OFF ASPHALT widths=%v kind=%v exit=%d progress=%.4f/%.4f alpha=%g corner=(%.1f,%.1f) point=(%.5f,%.5f)", widths, kind, exit, vehicle.motion.progress, connector.length, alpha, along, across, point[0], -point[2])) {
+                                    contained = false
+                                    break
+                                }
                             }
+                            if !contained { break }
                         }
                         if !contained { break }
                     }

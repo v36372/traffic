@@ -76,10 +76,13 @@ test_capture_cadence_and_seeded_clock_equivalence :: proc(t: ^testing.T) {
     testing.expect(t, warmup_scene(&smoke, false, true, 1.25) == 25)
     testing.expect(t, warmup_scene(&sequence, false, true, 1.25) == 25)
     testing.expect(t, warmup_scene(&reference, false, false, 1.25) == 25)
+    smoke_poses, sequence_poses := make(Render_Poses), make(Render_Poses)
+    defer delete(smoke_poses)
+    defer delete(sequence_poses)
     captured := 0
     for frame in 1..=SEQUENCE_FRAMES {
-        advance_capture_frame(&sequence, frame)
-        if frame <= 90 { advance_capture_frame(&smoke, frame) }
+        advance_capture_frame(&sequence, frame, &sequence_poses)
+        if frame <= 90 { advance_capture_frame(&smoke, frame, &smoke_poses) }
         if frame == 90 {
             expect_same_traffic(t, &smoke, &sequence)
             testing.expect(t, math.abs(smoke.time-2.75) < 0.0001)
