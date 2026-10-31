@@ -5,11 +5,14 @@ Owners: sim agent src/sim/**; data agent tools/build_map.py tools/test_build_map
 ## Public simulation API additions
 
 ```
-Signal_Plan :: struct { node: int, green, amber, clearance, offset: f32 }
+Signal_Plan :: struct { node: int, green, amber, clearance, offset: f32, countdown: bool }
+Signal_Spec :: struct { node: int, green, amber, clearance, offset: f32, countdown: bool }
+make_signal :: proc(spec: Signal_Spec) -> (Signal_Plan, bool)
 Spawn_Point :: struct { road, destination: int, interval: f32, kind: Vehicle_Kind }
 Signal_State :: enum { Uncontrolled, Red, Amber, Green }
 configure :: proc(w: ^World, signals: []Signal_Plan, spawns: []Spawn_Point) -> bool
 signal_state :: proc(w: ^World, road: int) -> Signal_State
+signal_phase :: proc(w: ^World, road: int) -> (state: Signal_State, remaining: f32, plan: Signal_Plan, ok: bool)
 ```
 World exposes owned `[dynamic]Signal_Plan signals`, `[dynamic]Spawn_Point spawns`, `requested:int`, `pending:int`. Other fields internal as needed; Vehicle may gain fields, existing API names remain.
 
@@ -24,15 +27,15 @@ Spawn route starts on specified directed road and ends at destination node. Vali
 Existing flat children nodes/roads/buildings retained. Road IDs are required ONLY if referenced by a spawn. `road` with direction=twoway ID resolves to declared forward edge; no ambiguous reverse-road convention.
 
 ```
-<signal id="junction-light" node="center" green="8" amber="2" clearance="1" offset="0"/>
+<signal id="junction-light" node="center" green="8" amber="3" clearance="2" offset="0" countdown="true"/>
 <spawn id="commuters" road="west-in" destination="east" interval="1.2" kind="motorcycle"/>
 ```
-Allowed spawn kind strings: motorcycle, car, bus, bicycle, truck, tricycle (match enum order, not display names). Strict attrs; default offset=0 permitted, other timings required. Validation matches simulation: unknown references, unreachable/width-incompatible route, duplicate node signal, invalid timings all fail before writing.
+Allowed spawn kind strings: motorcycle, car, bus, bicycle, truck, tricycle (match enum order, not display names). Strict attrs; default offset=0 and countdown=false permitted, other timings required. countdown is true/false. Validation matches simulation: unknown references, unreachable/width-incompatible route, duplicate node signal, invalid timings all fail before writing.
 
 Compiler ALWAYS emits stem-objects.csv, including empty header. Third output staged alongside existing road/building files; no multi-file transaction claim. Sidecar format:
 ```
 TRAFFIC_OBJECTS,1
-S,node_index,green,amber,clearance,offset
+S,node_index,green,amber,clearance,offset[,countdown]
 P,road_index,destination_node_index,interval,kind_int
 ```
 Mapdata API:
@@ -43,7 +46,7 @@ Caller deletes returned flat arrays after configure copies. Loader checks struct
 
 ## Frontend integration
 
-Load road geometry + optional objects into temporary World; configure before replacing live World. Existing scene retained on any failure. Detect missing vs present invalid sidecar with core:os. Reset must preserve copied signal/spawn definitions and restart time/RNG; B clears all. Render visible poles/colored heads/stop bars at each signal-controlled approach using the same signal_state used by sim; no per-frame all-pairs road indexing if avoidable. HUD labels scheduled vs random synthetic demand, signal/spawn/pending counts. Existing building sidecar remains separate. Support manual smoke --map path; do not mutate production OSM map to invent signals.
+Load road geometry + optional objects into temporary World; configure before replacing live World. Existing scene retained on any failure. Detect missing vs present invalid sidecar with core:os. Reset must preserve copied signal/spawn definitions and restart time/RNG; B clears all. Render a 3D pole-mounted head at each signal-controlled approach using the same `signal_phase` used by sim; no per-frame all-pairs road indexing if avoidable. `countdown=false` is a three-aspect head; `countdown=true` stacks a 7-segment LED module on the same housing (HCMC-style). No screen-space markers. HUD labels scheduled vs random synthetic demand, signal/spawn/pending counts. Existing building sidecar remains separate. Support manual smoke --map path; do not mutate production OSM map to invent signals.
 
 ## Examples and verification
 

@@ -1,17 +1,58 @@
-<map version="1" name="Intersection">
-  <node id="west" x="-100" y="0"/>
+<map version="1" name="Four-way">
+  <!-- Signalized single crossing with countdown heads. Mid-block nodes let
+       some riders U-turn before the box; west_stub is only a U-turn destination
+       (spawn origin cannot equal destination). Width is metres per direction. -->
+  <node id="west_stub" x="-120" y="0"/>
+  <node id="west_end" x="-90" y="0"/>
+  <node id="west" x="-40" y="0"/>
   <node id="center" x="0" y="0"/>
-  <node id="east" x="100" y="0"/>
-  <node id="north" x="0" y="100"/>
-  <node id="south" x="0" y="-100"/>
-  <road id="west-in" from="west" to="center" width="3.5" speed="10" direction="twoway"/>
-  <road from="center" to="east" width="3.5" speed="10" direction="twoway"/>
-  <road id="south-in" from="south" to="center" width="3.5" speed="10" direction="twoway"/>
-  <road from="center" to="north" width="3.5" speed="10" direction="twoway"/>
-  <signal id="junction-light" node="center" green="8" amber="2" clearance="1"/>
-  <spawn id="west-commuters" road="west-in" destination="east" interval="2" kind="motorcycle"/>
-  <spawn id="south-commuters" road="south-in" destination="north" interval="4" kind="car"/>
-  <building id="shop" kind="lowrise" height="8">
-    <vertex x="20" y="20"/><vertex x="65" y="20"/><vertex x="65" y="55"/><vertex x="20" y="55"/>
+  <node id="east" x="40" y="0"/>
+  <node id="east_end" x="90" y="0"/>
+  <node id="south_end" x="0" y="-90"/>
+  <node id="south" x="0" y="-40"/>
+  <node id="north" x="0" y="40"/>
+  <node id="north_end" x="0" y="90"/>
+
+  <road from="west_stub" to="west_end" width="4" speed="8" direction="twoway"/>
+  <road id="west-approach" from="west_end" to="west" width="4" speed="8" direction="twoway"/>
+  <road id="west-in" from="west" to="center" width="4" speed="8" direction="twoway"/>
+  <road from="center" to="east" width="4" speed="8" direction="twoway"/>
+  <road id="east-approach" from="east_end" to="east" width="4" speed="8" direction="twoway"/>
+  <road id="south-approach" from="south_end" to="south" width="4" speed="8" direction="twoway"/>
+  <road from="south" to="center" width="4" speed="8" direction="twoway"/>
+  <road from="center" to="north" width="4" speed="8" direction="twoway"/>
+  <road id="north-approach" from="north_end" to="north" width="4" speed="8" direction="twoway"/>
+
+  <signal id="four-way" node="center" green="8" amber="3" clearance="2" offset="0" countdown="true"/>
+
+  <driver kind="motorcycle" speed_min="0.65" speed_max="1" headway_min="0.5" headway_max="1.4"/>
+  <driver kind="car" speed_min="0.8" speed_max="1" headway_min="0.7" headway_max="1.3"/>
+  <driver kind="bicycle" speed_min="0.7" speed_max="1" headway_min="0.5" headway_max="1.2"/>
+  <driver kind="tricycle" speed_min="0.75" speed_max="1" headway_min="0.6" headway_max="1.2"/>
+
+  <spawn id="moto-west-through" road="west-approach" destination="east_end" interval="6" kind="motorcycle"/>
+  <spawn id="moto-west-left" road="west-approach" destination="north_end" interval="8" kind="motorcycle"/>
+  <spawn id="moto-west-right" road="west-approach" destination="south_end" interval="10" kind="motorcycle"/>
+  <spawn id="moto-west-uturn-early" road="west-approach" destination="west_stub" interval="12" kind="motorcycle"/>
+  <spawn id="moto-west-uturn-box" road="west-in" destination="west_end" interval="14" kind="motorcycle"/>
+  <spawn id="moto-east-through" road="east-approach" destination="west_end" interval="7" kind="motorcycle"/>
+  <spawn id="bike-east-right" road="east-approach" destination="north_end" interval="12" kind="bicycle"/>
+  <spawn id="moto-south-left" road="south-approach" destination="west_end" interval="6" kind="motorcycle"/>
+  <spawn id="moto-south-right" road="south-approach" destination="east_end" interval="7" kind="motorcycle"/>
+  <spawn id="car-south-through" road="south-approach" destination="north_end" interval="12" kind="car"/>
+  <spawn id="moto-north-left" road="north-approach" destination="east_end" interval="10" kind="motorcycle"/>
+  <spawn id="tricycle-north-through" road="north-approach" destination="south_end" interval="14" kind="tricycle"/>
+
+  <building id="nw-shop" kind="lowrise" height="10">
+    <vertex x="-18" y="14"/><vertex x="-48" y="14"/><vertex x="-48" y="42"/><vertex x="-18" y="42"/>
+  </building>
+  <building id="ne-shop" kind="lowrise" height="12">
+    <vertex x="18" y="14"/><vertex x="48" y="14"/><vertex x="48" y="40"/><vertex x="18" y="40"/>
+  </building>
+  <building id="sw-shop" kind="lowrise" height="9">
+    <vertex x="-18" y="-14"/><vertex x="-46" y="-14"/><vertex x="-46" y="-40"/><vertex x="-18" y="-40"/>
+  </building>
+  <building id="se-shop" kind="lowrise" height="11">
+    <vertex x="18" y="-14"/><vertex x="44" y="-14"/><vertex x="44" y="-38"/><vertex x="18" y="-38"/>
   </building>
 </map>

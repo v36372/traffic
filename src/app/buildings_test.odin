@@ -156,7 +156,7 @@ test_authored_showcase_buildings_clear_actual_pavement_and_poles_stay_on_sidewal
     testing.expect(t, !triangle_overlaps_building_bounds([3]Vec3{{3, 0, 3}, {4, 0, 3}, {3, 0, 4}}, {-1, 0, -1}, {1, 0, 1}))
     world: sim.World
     defer sim.destroy(&world)
-    if !testing.expect(t, load_map(&world, DEFAULT_MAP_PATH)) { return }
+    if !testing.expect(t, load_map(&world, SHOWCASE_MAP_PATH)) { return }
     central_edges := 0
     for road in world.roads {
         a, b := world.nodes[road.from].position, world.nodes[road.to].position
@@ -168,7 +168,7 @@ test_authored_showcase_buildings_clear_actual_pavement_and_poles_stay_on_sidewal
         }
     }
     testing.expect(t, central_edges == 6, "three authored central links must produce six directed carriageways")
-    path := building_sidecar(DEFAULT_MAP_PATH)
+    path := building_sidecar(SHOWCASE_MAP_PATH)
     defer delete(path)
     buildings, ok := mapdata.load_buildings(path)
     defer mapdata.destroy_buildings(buildings)

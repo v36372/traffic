@@ -12,7 +12,8 @@ import gl "vendor:raylib/rlgl"
 
 Vec3 :: rl.Vector3
 TICK :: f64(0.05)
-DEFAULT_MAP_PATH :: "build/maps/showcase.csv"
+DEFAULT_MAP_PATH :: "build/maps/intersection.csv"
+SHOWCASE_MAP_PATH :: "build/maps/showcase.csv"
 INK :: rl.Color{16, 27, 35, 240}
 PAPER :: rl.Color{227, 235, 232, 255}
 MINT :: rl.Color{125, 231, 190, 255}
@@ -37,7 +38,7 @@ run_frontend :: proc() -> int {
     // Parse before initializing raylib: --help works without a display.
     for arg in os.args[1:] {
         if arg == "--help" || arg == "-h" {
-            fmt.println("HCMC Traffic | Phase A technical prototype\nUsage: traffic-game [--map path] [--smoke-test] [--screenshot path.png]\n                   [--demand-scale multiplier] [--warmup seconds] [--capture-sequence DIR]\n\nDefault: authored synthetic neighborhood (build/maps/showcase.csv; required).\nShowcase starts at 60s with a focused west-crossing camera; Home shows the full map.\n--map loads geometry and optional stem-objects.csv signals/demand.\nWithout spawn definitions, demand is random synthetic (not calibrated).\n--demand-scale >0..20 divides configured source intervals; result must stay 0.05..86400s.\nThis is synthetic demand, not measured busy/off-peak counts; requires sources unless scale=1.\n--warmup 0..3600s, rounded to 50ms ticks; default showcase 60s, smoke 20s, otherwise 0s.\n--smoke-test renders 90 fixed-clock frames, then exits; no live controls.\n--screenshot captures frame 90 (creates no parent directories).\n--capture-sequence DIR implies smoke: 600 frames / 10s at 60fps, PNG every 6 frames (10Hz).\nDIR must already exist and be writable; captures frame-0006.png through frame-0600.png.\nUse the same map and warmup for synthetic demand comparisons; camera is unchanged.\n\nWASD/arrows or right drag: pan | Middle drag: orbit | Wheel: zoom\nN: north | Home: full-map overview | Space: pause | +/-: speed (0.25x..8x)\nR: restart current configuration | M: load map (--map path or build/maps/showcase.csv)\nB: synthetic demo (clears objects) | Esc: quit\n\nMap attribution: (c) OpenStreetMap contributors, ODbL\nhttps://www.openstreetmap.org/copyright")
+            fmt.println("HCMC Traffic | Phase A technical prototype\nUsage: traffic-game [--map path] [--smoke-test] [--screenshot path.png]\n                   [--demand-scale multiplier] [--warmup seconds] [--capture-sequence DIR]\n\nDefault: signalized four-way (build/maps/intersection.csv; required).\nIt starts at 30s looking at the crossing; Home shows the full map.\nLantern Quarter: --map build/maps/showcase.csv (60s warmup, west-crossing camera).\n--map loads geometry and optional stem-objects.csv signals/demand.\nWithout spawn definitions, demand is random synthetic (not calibrated).\n--demand-scale >0..20 divides configured source intervals; result must stay 0.05..86400s.\nThis is synthetic demand, not measured busy/off-peak counts; requires sources unless scale=1.\n--warmup 0..3600s, rounded to 50ms ticks; default intersection 30s, showcase 60s, smoke 20s, otherwise 0s.\n--smoke-test renders 90 fixed-clock frames, then exits; no live controls.\n--screenshot captures frame 90 (creates no parent directories).\n--capture-sequence DIR implies smoke: 600 frames / 10s at 60fps, PNG every 6 frames (10Hz).\nDIR must already exist and be writable; captures frame-0006.png through frame-0600.png.\nUse the same map and warmup for synthetic demand comparisons; camera is unchanged.\n\nWASD/arrows or right drag: pan | Middle drag: orbit | Wheel: zoom\nN: north | Home: full-map overview | Space: pause | +/-: speed (0.25x..8x)\nR: restart current configuration | M: load map (--map path or build/maps/intersection.csv)\nB: synthetic demo (clears objects) | Esc: quit\n\nMap attribution: (c) OpenStreetMap contributors, ODbL\nhttps://www.openstreetmap.org/copyright")
             fmt.println("\nMeasurements: HUD shows FPS / frame ms.\n--benchmark 1..300: real-clock timed run after 2s render warmup; controls disabled, Esc aborts.\nReports frame-time percentiles and simulation/draw/present timings; no screenshots.\n--uncapped: live play or benchmark without the 60 FPS limiter; not for smoke/capture.\nDesktop/GPU synchronization may still limit FPS; simulation speed is unchanged.")
             return 0
         }
@@ -50,7 +51,7 @@ run_frontend :: proc() -> int {
         return 2
     }
 
-    showcase := is_showcase_map(map_path)
+    profile := scene_profile(map_path)
     world: sim.World
     defer sim.destroy(&world)
     map_mode := load_map(&world, map_path, options.demand_scale)
@@ -65,11 +66,11 @@ run_frontend :: proc() -> int {
     defer destroy_road_scene(&roads)
     approaches := signal_approaches(&world, offsets)
     defer delete(approaches)
-    view := scene_entry_view(&world, &buildings, showcase)
+    view := scene_entry_view(&world, &buildings, profile)
     paused := false
     speed: f64 = 1
     accumulator: f64
-    warmup_scene(&world, showcase, smoke, options.warmup)
+    warmup_scene(&world, profile, smoke, options.warmup)
     previous_poses := make(Render_Poses)
     defer delete(previous_poses)
 
@@ -113,8 +114,8 @@ run_frontend :: proc() -> int {
                 delete(offsets); offsets = road_offsets(&world)
                 destroy_road_scene(&roads); roads = build_road_scene(&world, offsets)
                 delete(approaches); approaches = signal_approaches(&world, offsets)
-                view = scene_entry_view(&world, &buildings, showcase && map_mode, f32(rl.GetScreenWidth())/f32(rl.GetScreenHeight()))
-                if map_mode { warmup_scene(&world, showcase, false, options.warmup) }
+                view = scene_entry_view(&world, &buildings, map_mode ? profile : .Fitted, f32(rl.GetScreenWidth())/f32(rl.GetScreenHeight()))
+                if map_mode { warmup_scene(&world, profile, false, options.warmup) }
                 accumulator = 0
                 clear(&previous_poses)
             }
@@ -153,7 +154,7 @@ run_frontend :: proc() -> int {
         draw_signals(&world, approaches[:])
         for vehicle in world.vehicles { draw_vehicle(&world, vehicle, previous_poses, alpha) }
         rl.EndMode3D()
-        draw_hud(&world, map_mode, map_error, paused, speed, view, buildings.count, showcase, options.demand_scale)
+        draw_hud(&world, map_mode, map_error, paused, speed, view, buildings.count, profile, options.demand_scale)
         present_start := rl.GetTime()
         rl.EndDrawing()
         frame_end := rl.GetTime()
@@ -403,14 +404,15 @@ draw_vehicle :: proc(world: ^sim.World, v: sim.Vehicle, previous: Render_Poses, 
     }
 }
 
-draw_hud :: proc(world: ^sim.World, map_mode, map_error, paused: bool, speed: f64, view: View, building_count: int, showcase: bool, demand_scale: f32) {
+draw_hud :: proc(world: ^sim.World, map_mode, map_error, paused: bool, speed: f64, view: View, building_count: int, profile: Scene_Profile, demand_scale: f32) {
     w, h := rl.GetScreenWidth(), rl.GetScreenHeight()
     rl.DrawRectangle(16, 16, 422, 91, INK)
     rl.DrawRectangle(16, 16, 3, 91, MINT)
     rl.DrawText("TRAFFIC LAB / PROTOTYPE", 30, 26, 18, PAPER)
     label: cstring = "DEBUG JUNCTION / SYNTHETIC DEMAND"
     if map_mode { label = fmt.ctprintf("MAP / %d BLDGS / SYNTHETIC DEMAND %.2gx", building_count, demand_scale) }
-    if map_mode && showcase { label = fmt.ctprintf("AUTHORED / %d BLDGS / SYNTHETIC DEMAND %.2gx", building_count, demand_scale) }
+    if map_mode && profile == .Intersection { label = fmt.ctprintf("SIGNALIZED FOUR-WAY / %d BLDGS / DEMAND %.2gx", building_count, demand_scale) }
+    if map_mode && profile == .Showcase { label = fmt.ctprintf("AUTHORED / %d BLDGS / SYNTHETIC DEMAND %.2gx", building_count, demand_scale) }
     rl.DrawText(label, 30, 51, 14, MINT)
     state := "RUN"; if paused { state = "PAUSED" }
     rl.DrawText(fmt.ctprintf("%s %.2gx  %.1fs  |  %d active  %d complete", state, speed, world.time, len(world.vehicles), world.completed), 30, 76, 16, PAPER)

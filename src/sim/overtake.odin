@@ -3,15 +3,22 @@ package sim
 import "core:math"
 
 // Lane changes are confined to one straight link and finish before either
-// junction envelope. The fixed 12m transition and sampled collision checks
-// are conservative gameplay approximations, not swept-volume certification.
-Lane_Change :: struct { active: bool, start, from, to: f32 }
+// junction envelope. Default 12m, or a shorter motorcycle squeeze; sampled
+// collision checks are conservative gameplay approximations, not swept-volume
+// certification.
+Lane_Change :: struct { active: bool, start, from, to, length: f32 }
 LANE_CHANGE_LENGTH :: f32(12)
 
+lane_change_length :: proc(v: Vehicle) -> f32 {
+    if v.lane.active && v.lane.length > 0 { return v.lane.length }
+    return LANE_CHANGE_LENGTH
+}
+
 lane_offset :: proc(v: Vehicle) -> (offset, slope: f32) {
-    u := clamp((v.distance-v.lane.start)/LANE_CHANGE_LENGTH, 0, 1)
+    length := lane_change_length(v)
+    u := clamp((v.distance-v.lane.start)/length, 0, 1)
     delta := v.lane.to-v.lane.from
-    return v.lane.from+delta*u*u*(3-2*u), delta*6*u*(1-u)/LANE_CHANGE_LENGTH
+    return v.lane.from+delta*u*u*(3-2*u), delta*6*u*(1-u)/length
 }
 
 // The closing-speed horizon covers the remaining transition at current speed
@@ -19,7 +26,7 @@ lane_offset :: proc(v: Vehicle) -> (offset, slope: f32) {
 // checks still arbitrate actual movement if the prediction changes.
 lane_rear_safe :: proc(w: ^World, i: int, v: Vehicle, predictive: bool) -> bool {
     radius := 0.5*math.sqrt(kind_length(v.kind)*kind_length(v.kind)+kind_width(v.kind)*kind_width(v.kind))
-    remaining := max(0, v.lane.start+LANE_CHANGE_LENGTH-v.distance)
+    remaining := max(0, v.lane.start+lane_change_length(v)-v.distance)
     horizon := 2+remaining/max(1, v.speed)
     for other, j in w.vehicles {
         if i == j || other.road != v.road || other.distance > v.distance { continue }
@@ -52,12 +59,11 @@ try_overtake :: proc(w: ^World, i: int) {
     v := w.vehicles[i]
     // Preserve the sampled all-default baseline; explicit non-balanced
     // personas may still pass when attached to a behavior-enabled world.
-    varied := false
-    for r in w.behavior.classes { if r.speed_min != r.speed_max || r.headway_min != r.headway_max { varied = true; break } }
-    if !w.behavior.enabled || (!varied && v.driver.persona == .Balanced) || v.motion.active || v.lane.active { return }
+    if !w.behavior.enabled || (!behavior_varied(w.behavior) && v.driver.persona == .Balanced) || v.motion.active || v.lane.active { return }
     radius := 0.5*math.sqrt(kind_length(v.kind)*kind_length(v.kind)+kind_width(v.kind)*kind_width(v.kind))
+    length := pass_length(v)
     if v.distance-radius <= junction_setback(w, v.road, true, true)+1+CROSSING_DEPTH { return }
-    if v.distance+LANE_CHANGE_LENGTH+radius >= entry_distance(w, v.road, v.kind) { return }
+    if v.distance+length+radius >= entry_distance(w, v.road, v.kind) { return }
     // Do not start a second maneuver behind one still changing bands.
     for other in w.vehicles { if other.lane.active && other.road == v.road && other.distance >= v.distance && other.distance-v.distance < 35 { return } }
     target := min(w.roads[v.road].speed_limit, kind_speed(v.kind))*v.driver.traits.speed_factor
@@ -74,23 +80,29 @@ try_overtake :: proc(w: ^World, i: int) {
     lead := w.vehicles[lead_index]
     shift := (kind_width(lead.kind)+kind_width(v.kind))*0.5+0.3
     side := v.driver.side
+    horizon := gap_horizon(v.driver)
+    steps := int(math.ceil(f64(length/0.1)))
     // Up to 121 world-body scans per side per trial, repeated each tick;
     // population is capped at 120. Use a spatial corridor index/candidate
     // cache before scaling beyond that ceiling.
     for sign in ([2]f32{side, -side}) {
         candidate := v
-        candidate.lane = {active = true, start = v.distance, from = v.lateral, to = lead.lateral+sign*shift}
+        candidate.lane = {active = true, start = v.distance, from = v.lateral, to = lead.lateral+sign*shift, length = length}
         // The cubic's maximum slope is 1.5*shift/length. Projecting the
         // rectangle with sin(angle)<=slope conservatively bounds its corners.
-        extent := kind_width(v.kind)*0.5+kind_length(v.kind)*0.5*1.5*abs(candidate.lane.to-candidate.lane.from)/LANE_CHANGE_LENGTH
+        extent := kind_width(v.kind)*0.5+kind_length(v.kind)*0.5*1.5*abs(candidate.lane.to-candidate.lane.from)/length
         if max(abs(candidate.lane.from), abs(candidate.lane.to))+extent > w.roads[v.road].width*0.5 || !lane_rear_safe(w, i, candidate, true) { continue }
         clear := true
-        for k in 0..=120 {
+        for k in 0..=steps {
             trial := candidate
-            trial.distance = v.distance+f32(k)*0.1
+            trial.distance = min(v.distance+length, v.distance+f32(k)*0.1)
             trial.lateral, _ = lane_offset(trial)
-            if !body_clear(w, trial, i) || !local_gap_clear(w, trial, i, v.speed) { clear = false; break }
+            if !body_clear(w, trial, i) || !local_gap_clear(w, trial, i, v.speed, horizon) { clear = false; break }
         }
-        if clear { w.vehicles[i].lane = candidate.lane; w.vehicles[i].driver.mode = .Passing; return }
+        if clear {
+            w.vehicles[i].lane = candidate.lane
+            w.vehicles[i].driver.mode = length < LANE_CHANGE_LENGTH ? .Filtering : .Passing
+            return
+        }
     }
 }

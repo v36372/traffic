@@ -19,7 +19,7 @@ test_crossing_paint_full_span_stop_order_and_actual_curb_landings :: proc(t: ^te
             []sim.Road{{1, 0, w[0], 9}, {0, 1, w[1], 9}, {0, 2, w[1], 9}, {2, 0, w[0], 9},
                        {3, 0, w[2], 9}, {0, 3, w[3], 9}, {0, 4, w[3], 9}, {4, 0, w[2], 9}})
         defer sim.destroy(&world)
-        testing.expect(t, sim.configure(&world, []sim.Signal_Plan{{0, 100, 1, 1, 0}}, nil))
+        testing.expect(t, sim.configure(&world, []sim.Signal_Plan{{0, 100, 1, 1, 0, false}}, nil))
         offsets := road_offsets(&world)
         defer delete(offsets)
         scene := build_road_scene(&world, offsets)

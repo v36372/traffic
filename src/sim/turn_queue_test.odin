@@ -85,7 +85,7 @@ test_red_signal_still_prevents_local_gap_entry :: proc(t: ^testing.T) {
         {0,1,4,8}, {1,0,4,8}, {1,2,4,8}, {2,1,4,8}, {3,1,4,8}, {1,3,4,8}, {4,1,4,8}, {1,4,4,8},
     })
     defer destroy(&w)
-    testing.expect(t, configure(&w, []Signal_Plan{{1,100,1,1,0}}, []Spawn_Point{{0,2,86400,.Motorcycle}}))
+    testing.expect(t, configure(&w, []Signal_Plan{{1,100,1,1,0, false}}, []Spawn_Point{{0,2,86400,.Motorcycle}}))
     w.time = 102
     append(&w.vehicles, Vehicle{road = 0, distance = entry_distance(&w, 0, .Motorcycle), speed = 4, kind = .Motorcycle})
     for _ in 0..<100 {

@@ -13,7 +13,7 @@ configure :: proc(w: ^World, signals: []Signal_Plan, spawns: []Spawn_Point) -> b
     }
     for s, i in signals {
         // Timers are bounded for the 20 Hz simulation and practical integer demand counts.
-        if s.node < 0 || s.node >= len(w.nodes) || !finite(s.green) || !finite(s.amber) || !finite(s.clearance) || !finite(s.offset) || s.green < 0.05 || s.green > 86400 || s.amber < 0.05 || s.amber > 86400 || s.clearance < 0.05 || s.clearance > 86400 || s.offset < 0 || s.offset > 86400 { return false }
+        if s.node < 0 || s.node >= len(w.nodes) || !valid_signal_timings(s) { return false }
         for j in 0..<i { if signals[j].node == s.node { return false } }
         incoming := 0
         for r, road in w.roads {
@@ -81,10 +81,47 @@ configure :: proc(w: ^World, signals: []Signal_Plan, spawns: []Spawn_Point) -> b
     return true
 }
 
+Signal_Spec :: struct {
+    node: int,
+    green, amber, clearance, offset: f32,
+    countdown: bool,
+}
+
+default_signal_spec :: proc() -> Signal_Spec {
+    return {green = 8, amber = 3, clearance = 2}
+}
+
+valid_signal_timings :: proc(plan: Signal_Plan) -> bool {
+    return finite(plan.green) && finite(plan.amber) && finite(plan.clearance) && finite(plan.offset) &&
+        plan.green >= 0.05 && plan.green <= 86400 && plan.amber >= 0.05 && plan.amber <= 86400 &&
+        plan.clearance >= 0.05 && plan.clearance <= 86400 && plan.offset >= 0 && plan.offset <= 86400
+}
+
+// Value-owned plan from authored timings. Topology (incoming roads, stop lines)
+// is checked by configure; flashing yellow and turn-only phases are not options.
+make_signal :: proc(spec: Signal_Spec) -> (Signal_Plan, bool) {
+    if spec.node < 0 { return {}, false }
+    plan := Signal_Plan{
+        node = spec.node,
+        green = spec.green,
+        amber = spec.amber,
+        clearance = spec.clearance,
+        offset = spec.offset,
+        countdown = spec.countdown,
+    }
+    if !valid_signal_timings(plan) { return {}, false }
+    return plan, true
+}
+
+signal_countdown_seconds :: proc(remaining: f32) -> int {
+    if !finite(remaining) || remaining <= 0 { return 0 }
+    return int(math.ceil(remaining))
+}
+
 // O(signals*roads) per query is bounded by the small spike maps; cache approach
 // indexes before scaling the graph or active population.
-signal_state :: proc(w: ^World, road: int) -> Signal_State {
-    if road < 0 || road >= len(w.roads) { return .Uncontrolled }
+signal_phase :: proc(w: ^World, road: int) -> (state: Signal_State, remaining: f32, plan: Signal_Plan, ok: bool) {
+    if road < 0 || road >= len(w.roads) { return .Uncontrolled, 0, {}, false }
     for s in w.signals {
         if w.roads[road].to != s.node { continue }
         count, index := 0, 0
@@ -95,14 +132,27 @@ signal_state :: proc(w: ^World, road: int) -> Signal_State {
             }
         }
         slot := f64(s.green) + f64(s.amber) + f64(s.clearance)
-        phase := math.mod(w.time + f64(s.offset), slot * f64(count))
-        if int(phase / slot) != index { return .Red }
-        within := phase - f64(index)*slot
-        if within < f64(s.green) { return .Green }
-        if within < f64(s.green) + f64(s.amber) { return .Amber }
-        return .Red
+        cycle := slot * f64(count)
+        phase := math.mod(w.time + f64(s.offset), cycle)
+        if phase < 0 { phase += cycle }
+        start := slot * f64(index)
+        until_green := start - phase
+        if until_green < 0 { until_green += cycle }
+        within := phase - start
+        if within >= 0 && within < f64(s.green) {
+            return .Green, f32(f64(s.green) - within), s, true
+        }
+        if within >= f64(s.green) && within < f64(s.green) + f64(s.amber) {
+            return .Amber, f32(f64(s.green) + f64(s.amber) - within), s, true
+        }
+        return .Red, f32(until_green), s, true
     }
-    return .Uncontrolled
+    return .Uncontrolled, 0, {}, false
+}
+
+signal_state :: proc(w: ^World, road: int) -> Signal_State {
+    state, _, _, _ := signal_phase(w, road)
+    return state
 }
 
 scheduled_spawns :: proc(w: ^World, dt: f32) {

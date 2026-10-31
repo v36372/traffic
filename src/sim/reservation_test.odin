@@ -22,7 +22,7 @@ test_angle_boundaries_red_queue_green_release :: proc(t: ^testing.T) {
         init(&w, []Node{{{-60*f.x,-60*f.y}}, {{0,0}}, {{60*g.x,60*g.y}}}, []Road{
             {0,1,4,8}, {1,0,4,8}, {1,2,4,8}, {2,1,4,8},
         })
-        testing.expect(t, configure(&w, []Signal_Plan{{1,2,1,1,2}}, []Spawn_Point{{0,2,86400,.Car}}))
+        testing.expect(t, configure(&w, []Signal_Plan{{1,2,1,1,2, false}}, []Spawn_Point{{0,2,86400,.Car}}))
         line := entry_distance(&w, 0, .Car)
         for i in 0..<3 { append(&w.vehicles, Vehicle{road = 0, distance = line-2-f32(i)*6, speed = 3, kind = .Car, id = u64(i+1)}) }
         w.spawned, w.requested = 3, 3
@@ -51,7 +51,7 @@ test_shared_node_phase_change_and_reserved_exit :: proc(t: ^testing.T) {
         {0,1,3.5,8}, {1,2,3.5,8}, {3,1,3.5,8}, {1,4,3.5,8},
     })
     defer destroy(&w)
-    testing.expect(t, configure(&w, []Signal_Plan{{1,100,1,1,0}}, []Spawn_Point{{0,2,86400,.Car}, {2,4,86400,.Car}}))
+    testing.expect(t, configure(&w, []Signal_Plan{{1,100,1,1,0, false}}, []Spawn_Point{{0,2,86400,.Car}, {2,4,86400,.Car}}))
     append(&w.vehicles, Vehicle{road = 0, distance = entry_distance(&w, 0, .Car), speed = 2, kind = .Car, id = 1})
     append(&w.vehicles, Vehicle{road = 2, distance = entry_distance(&w, 2, .Car), speed = 2, kind = .Car, spawn_index = 1, id = 2})
     w.spawned, w.requested = 2, 2

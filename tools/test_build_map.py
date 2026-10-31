@@ -82,14 +82,35 @@ class BuildMapTest(unittest.TestCase):
             self.assertEqual(source.read_text(), BASE)
 
     def test_objects(self):
-        xml = (ROOT / 'maps/intersection.xml').read_text()
+        xml = '''<map version="1" name="Intersection">
+  <node id="west" x="-100" y="0"/>
+  <node id="center" x="0" y="0"/>
+  <node id="east" x="100" y="0"/>
+  <node id="north" x="0" y="100"/>
+  <node id="south" x="0" y="-100"/>
+  <road id="west-in" from="west" to="center" width="3.5" speed="10" direction="twoway"/>
+  <road from="center" to="east" width="3.5" speed="10" direction="twoway"/>
+  <road id="south-in" from="south" to="center" width="3.5" speed="10" direction="twoway"/>
+  <road from="center" to="north" width="3.5" speed="10" direction="twoway"/>
+  <signal id="junction-light" node="center" green="8" amber="2" clearance="1"/>
+  <spawn id="west-commuters" road="west-in" destination="east" interval="2" kind="motorcycle"/>
+  <spawn id="south-commuters" road="south-in" destination="north" interval="4" kind="car"/>
+  <building id="shop" kind="lowrise" height="8">
+    <vertex x="20" y="20"/><vertex x="65" y="20"/><vertex x="65" y="55"/><vertex x="20" y="55"/>
+  </building>
+</map>
+'''
         with tempfile.TemporaryDirectory() as d:
             source, output = Path(d) / 'in.xml', Path(d) / 'out.csv'
             source.write_text(xml)
             build(source, output)
             rows = list(csv.reader((Path(d) / 'out-objects.csv').read_text().splitlines()))
-            self.assertEqual(rows, [['TRAFFIC_OBJECTS', '1'], ['S', '1', '8.0', '2.0', '1.0', '0.0'],
+            self.assertEqual(rows, [['TRAFFIC_OBJECTS', '1'], ['S', '1', '8.0', '2.0', '1.0', '0.0', '0'],
                                     ['P', '0', '2', '2.0', '0'], ['P', '4', '3', '4.0', '1']])
+            source.write_text(xml.replace('clearance="1"', 'clearance="1" countdown="true"'))
+            build(source, output)
+            rows = list(csv.reader((Path(d) / 'out-objects.csv').read_text().splitlines()))
+            self.assertEqual(rows[1], ['S', '1', '8.0', '2.0', '1.0', '0.0', '1'])
             bad = [
                 xml.replace('node="center" green', 'node="missing" green'),
                 xml.replace('</map>', '<signal id="other" node="center" green="1" amber="1" clearance="1"/></map>'),
@@ -98,6 +119,7 @@ class BuildMapTest(unittest.TestCase):
                 xml.replace('amber="2"', 'amber="86401"'),
                 xml.replace('clearance="1"', 'clearance="nan"'),
                 xml.replace('green="8"', 'green="8" offset="-0.00001"'),
+                xml.replace('clearance="1"', 'clearance="1" countdown="yes"'),
                 xml.replace('road="west-in"', 'road="missing"'),
                 xml.replace('destination="east"', 'destination="west"'),
                 xml.replace('kind="motorcycle"', 'kind="scooter"'),

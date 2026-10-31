@@ -26,7 +26,7 @@ test_signals_clear_all_junction_pavement_and_vehicle_front_meets_bar :: proc(t: 
         world: sim.World
         sim.init(&world, nodes, input)
         defer sim.destroy(&world)
-        testing.expect(t, sim.configure(&world, []sim.Signal_Plan{{0, 100, 1, 1, 0}}, nil))
+        testing.expect(t, sim.configure(&world, []sim.Signal_Plan{{0, 100, 1, 1, 0, false}}, nil))
         offsets := road_offsets(&world)
         defer delete(offsets)
         pavement := build_road_scene(&world, offsets)

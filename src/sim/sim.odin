@@ -16,7 +16,7 @@ Vehicle :: struct {
     motion: Connector,
     lane: Lane_Change,
 }
-Signal_Plan :: struct { node: int, green, amber, clearance, offset: f32 }
+Signal_Plan :: struct { node: int, green, amber, clearance, offset: f32, countdown: bool }
 Spawn_Point :: struct { road, destination: int, interval: f32, kind: Vehicle_Kind }
 Signal_State :: enum { Uncontrolled, Red, Amber, Green }
 Spawn_Runtime :: struct { next: [dynamic]int, elapsed: f64, pending, admitted: int }
@@ -213,6 +213,28 @@ next_road :: proc(w: ^World, current: int) -> int {
     return fallback
 }
 
+// Seeded successor among non-reversing exits. wander=0 keeps next_road's first choice.
+choose_next_road :: proc(w: ^World, v: Vehicle) -> int {
+    node := w.roads[v.road].to
+    fallback := -1
+    options: [8]int
+    n := 0
+    for i in 0..<len(w.roads) {
+        r := w.roads[i]
+        if r.from != node { continue }
+        if fallback < 0 { fallback = i }
+        if r.to == w.roads[v.road].from { continue }
+        if v.driver.wander <= 0 { return i }
+        if n < len(options) { options[n] = i; n += 1 }
+    }
+    if n == 0 { return fallback }
+    if n == 1 { return options[0] }
+    if driver_sample(w.behavior_seed, v.id, 0x9b05688c2b3e6c1d ~ u64(v.road)) >= v.driver.wander { return options[0] }
+    pick := int(driver_sample(w.behavior_seed, v.id, 0x27bb2ee687b0b0fd ~ u64(v.road))*f32(n))
+    if pick >= n { pick = n-1 }
+    return options[pick]
+}
+
 step :: proc(w: ^World, dt: f32) {
     if dt <= 0 || !finite(dt) || len(w.roads) == 0 { return }
     if len(w.stop_lines) != len(w.roads) { cache_geometry(w) }
@@ -239,8 +261,13 @@ step_tick :: proc(w: ^World, dt: f32) {
     i := 0
     for i < len(w.vehicles) {
         v := w.vehicles[i]
+        if v.driver.mode == .Following || v.driver.mode == .Seeking || v.driver.mode == .Stopped_Signal || v.driver.mode == .Following_Junction {
+            w.vehicles[i].driver.waited += dt
+        } else if v.driver.mode != .Passing && v.driver.mode != .Filtering && v.driver.mode != .Junction {
+            w.vehicles[i].driver.waited = 0
+        }
         update_driver_mode(w, i)
-        if w.vehicles[i].driver.mode == .Following { try_overtake(w, i) }
+        if driver_should_pass(w.vehicles[i]) { try_overtake(w, i) }
         v = w.vehicles[i]
         target := min(w.roads[v.road].speed_limit, kind_speed(v.kind))
         if v.motion.active && v.motion.exit >= 0 { target = min(target, w.roads[v.motion.exit].speed_limit) }
@@ -254,6 +281,14 @@ step_tick :: proc(w: ^World, dt: f32) {
         if v.motion.active {
             _, straight := straight_direction(v.motion)
             if !straight { target = min(target, 4) }
+            // After yielding in the box, complete a left at a committed pace
+            // rather than crawling the rest of the curve at the 4 m/s target.
+            if connector_is_left(v.motion) && v.driver.mode == .Junction && v.driver.waited >= 0.25 {
+                cap := min(w.roads[v.road].speed_limit, kind_speed(v.kind))
+                if v.motion.exit >= 0 { cap = min(cap, w.roads[v.motion.exit].speed_limit) }
+                target = min(cap, 6.5)
+                if w.behavior.enabled { target *= v.driver.traits.speed_factor }
+            }
         }
         if !v.motion.active {
             // Brake towards a slower exit or a known change of heading before
@@ -280,6 +315,9 @@ step_tick :: proc(w: ^World, dt: f32) {
         speed := v.speed
         acceleration := f32(2)
         if w.behavior.enabled { acceleration = v.driver.traits.acceleration }
+        if v.motion.active && connector_is_left(v.motion) && v.driver.mode == .Junction && v.driver.waited >= 0.25 {
+            acceleration = max(acceleration, 3.5)
+        }
         if speed < target { speed = min(target, speed+acceleration*dt) } else { speed = max(target, speed-4*dt) }
         speed = max(0, min(speed, v.speed+following_acceleration(w, v, i, headway, acceleration)*dt))
         budget := speed*dt

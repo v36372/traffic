@@ -83,7 +83,7 @@ test_reset_preserves_configuration_restarts_clocks_and_rng :: proc(t: ^testing.T
     sim.init_demo(&reference)
     defer sim.destroy(&world)
     defer sim.destroy(&reference)
-    plans := []sim.Signal_Plan{{1, 2, 1, 1, 0.5}}
+    plans := []sim.Signal_Plan{{1, 2, 1, 1, 0.5, false}}
     sources := []sim.Spawn_Point{{0, 2, 0.6, .Motorcycle}, {2, 2, 1.2, .Car}}
     testing.expect(t, sim.configure(&world, plans, sources))
     testing.expect(t, sim.configure(&reference, plans, sources))
@@ -116,7 +116,7 @@ test_signal_approach_model_geometry_and_phase_colors :: proc(t: ^testing.T) {
     uncontrolled := signal_approaches(&world, offsets)
     defer delete(uncontrolled)
     testing.expect(t, len(uncontrolled) == 0, "no invented controls on object-free maps")
-    testing.expect(t, sim.configure(&world, []sim.Signal_Plan{{1, 2, 1, 1, 0}}, nil))
+    testing.expect(t, sim.configure(&world, []sim.Signal_Plan{{1, 2, 1, 1, 0, false}}, nil))
     approaches := signal_approaches(&world, offsets)
     defer delete(approaches)
     testing.expect(t, len(approaches) == 2)
@@ -137,9 +137,16 @@ test_signal_approach_model_geometry_and_phase_colors :: proc(t: ^testing.T) {
     red := signal_lamp_color(.Red, 0)
     amber := signal_lamp_color(.Amber, 1)
     green := signal_lamp_color(.Green, 2)
-    testing.expect(t, red.r > red.g && amber.r > amber.b && green.g > green.r)
-    testing.expect(t, signal_lamp_color(.Green, 0) == signal_lamp_color(.Red, 2))
-    testing.expect(t, signal_lamp_color(.Uncontrolled, 0) == signal_lamp_color(.Green, 0))
+    testing.expect(t, red.r >= 240 && red.g < 40 && red.b < 40, "red lamp must read as red")
+    testing.expect(t, amber.r >= 240 && amber.g >= 160 && amber.b < 40, "amber lamp must read as yellow")
+    testing.expect(t, green.g >= 200 && green.r < 40 && green.b < 120, "green lamp must read as green")
+    testing.expect(t, signal_state_color(.Red) == red && signal_state_color(.Amber) == amber && signal_state_color(.Green) == green)
+    testing.expect(t, signal_lamp_color(.Green, 0) != signal_lamp_color(.Red, 0))
+    testing.expect(t, signal_lamp_color(.Uncontrolled, 0) != signal_state_color(.Red))
+    testing.expect(t, signal_model(sim.Signal_Plan{}) == .Three_Aspect)
+    testing.expect(t, signal_model(sim.Signal_Plan{countdown = true}) == .Countdown)
+    testing.expect(t, seven_segment_mask(8) == 0x7F && seven_segment_mask(1) == 0x06 && seven_segment_mask(10) == 0)
+    testing.expect(t, signal_countdown_places(9) == 2 && signal_countdown_places(99) == 2 && signal_countdown_places(100) == 3)
     for phase, i in ([]sim.Signal_State{.Green, .Amber, .Red}) {
         world.time = f64(i)+1
         state := sim.signal_state(&world, 0)

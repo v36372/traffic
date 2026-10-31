@@ -84,10 +84,10 @@ building_validation :: proc(t: ^testing.T) {
 
 @(test)
 object_validation :: proc(t: ^testing.T) {
-    valid := []string{"S,0,0.05,2,1,0", "P,0,1,86400,5", "D,0,0.5,1,0.4,2"}
+    valid := []string{"S,0,0.05,2,1,0", "S,0,8,3,2,0,1", "P,0,1,86400,5", "D,0,0.5,1,0.4,2"}
     invalid := []string{
         "S,0,1,1,1", "S,-1,1,1,1,0", "S,0,nan,1,1,0", "S,0,1,inf,1,0",
-        "S,0,0.001,1,1,0", "S,0,1,86401,1,0", "S,0,1,1,1,-1",
+        "S,0,0.001,1,1,0", "S,0,1,86401,1,0", "S,0,1,1,1,-1", "S,0,8,3,2,0,2", "S,0,8,3,2,0,true",
         "P,0,1,0.001,0", "P,0,1,86401,0", "P,-1,1,2,0", "P,0,-1,2,0",
         "P,0,1,2,6", "P,0,1,2,-1", "P,0,1,2,0,extra", "X,0,1,2,0",
         "D,0,0.5,1,0.4,2", "D,1,nan,1,0.4,2", "D,1,0.5,1.01,0.4,2", "D,1,0.5,1,0.3,2", "D,6,0.5,1,0.4,2",
@@ -101,13 +101,13 @@ object_validation :: proc(t: ^testing.T) {
         testing.expect(t, parse_object(fields, &signals, &spawns, &drivers, &seen))
         delete(fields)
     }
-    testing.expect(t, len(signals) == 1 && len(spawns) == 1)
+    testing.expect(t, len(signals) == 2 && len(spawns) == 1 && signals[1].countdown)
     for s in invalid {
         fields := strings.split(s, ",")
         testing.expect(t, !parse_object(fields, &signals, &spawns, &drivers, &seen))
         delete(fields)
     }
-    testing.expect(t, len(signals) == 1 && len(spawns) == 1)
+    testing.expect(t, len(signals) == 2 && len(spawns) == 1)
     delete(signals); delete(spawns)
     ok: bool
     signals, spawns, _, ok = load_objects("src/mapdata/testdata/objects-invalid.csv")

@@ -53,6 +53,14 @@ def ident(value):
     return value
 
 
+def flag(value, label):
+    if value == 'true':
+        return True
+    if value == 'false':
+        return False
+    raise ValueError(f'invalid {label}: {value}')
+
+
 def compile_map(source):
     root = ET.parse(source).getroot()
     if root.tag != 'map':
@@ -89,7 +97,7 @@ def compile_map(source):
                           number(child.get('speed'), 'speed', 0, 100), direction))
         elif child.tag in ('signal', 'spawn'):
             required = ('id', 'node', 'green', 'amber', 'clearance') if child.tag == 'signal' else ('id', 'road', 'destination', 'interval', 'kind')
-            attrs(child, required, ('offset',) if child.tag == 'signal' else ())
+            attrs(child, required, ('offset', 'countdown') if child.tag == 'signal' else ())
             if len(child):
                 raise ValueError(f'{child.tag} cannot contain elements')
             ids = signal_ids if child.tag == 'signal' else spawn_ids
@@ -165,7 +173,8 @@ def compile_map(source):
         controlled.add(node)
         timings = [timing(signal.get(k), k, 0.05) for k in ('green', 'amber', 'clearance')]
         offset = timing(signal.get('offset', '0'), 'offset', 0)
-        objects.append(['S', index, *timings, offset])
+        countdown = 1 if flag(signal.get('countdown', 'false'), 'countdown') else 0
+        objects.append(['S', index, *timings, offset, countdown])
     for spawn in spawns:
         road, destination, kind = spawn.get('road'), spawn.get('destination'), spawn.get('kind')
         if road not in road_indexes or destination not in indexes or kind not in VEHICLES:

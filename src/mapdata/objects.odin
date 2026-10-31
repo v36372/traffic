@@ -46,14 +46,22 @@ parse_object :: proc(fields: []string, signals: ^[dynamic]sim.Signal_Plan, spawn
         drivers.classes[kind] = {a, b, c, d}
         return true
     }
-    if len(fields) == 6 && fields[0] == "S" {
+    if (len(fields) == 6 || len(fields) == 7) && fields[0] == "S" {
         node, nok := strconv.parse_int(fields[1], 10)
         green, gok := strconv.parse_f32(fields[2])
         amber, aok := strconv.parse_f32(fields[3])
         clearance, cok := strconv.parse_f32(fields[4])
         offset, ook := strconv.parse_f32(fields[5])
-        if !nok || !gok || !aok || !cok || !ook || node < 0 || !(green >= 0.05 && green <= 86400 && amber >= 0.05 && amber <= 86400 && clearance >= 0.05 && clearance <= 86400 && offset >= 0 && offset <= 86400) { return false }
-        append(signals, sim.Signal_Plan{node = node, green = green, amber = amber, clearance = clearance, offset = offset})
+        countdown := false
+        if len(fields) == 7 {
+            flag, fok := strconv.parse_int(fields[6], 10)
+            if !fok || (flag != 0 && flag != 1) { return false }
+            countdown = flag == 1
+        }
+        spec := sim.Signal_Spec{node = node, green = green, amber = amber, clearance = clearance, offset = offset, countdown = countdown}
+        plan, valid := sim.make_signal(spec)
+        if !nok || !gok || !aok || !cok || !ook || !valid { return false }
+        append(signals, plan)
         return true
     }
     if len(fields) == 5 && fields[0] == "P" {

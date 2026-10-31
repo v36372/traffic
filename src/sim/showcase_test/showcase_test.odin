@@ -145,7 +145,7 @@ test_controlled_showcase_bend_never_steers_before_mouth :: proc(t: ^testing.T) {
     if !loaded { return }
     defer delete(signals)
     defer delete(sources)
-    append(&signals, sim.Signal_Plan{0,100,2,1,0})
+    append(&signals, sim.Signal_Plan{0,100,2,1,0, false})
     w: sim.World
     sim.init(&w, nodes[:], roads[:], 1)
     defer sim.destroy(&w)

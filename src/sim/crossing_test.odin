@@ -14,7 +14,7 @@ test_crossing_full_reciprocal_span_clears_skew_strips_and_landings :: proc(t: ^t
             {1,0,x[0],8}, {0,1,x[1],8}, {0,2,x[1],8}, {2,0,x[0],8},
             {3,0,x[2],8}, {0,3,x[3],8}, {0,4,x[3],8}, {4,0,x[2],8},
         })
-        testing.expect(t, configure(&w, []Signal_Plan{{0,100,1,1,0}}, nil))
+        testing.expect(t, configure(&w, []Signal_Plan{{0,100,1,1,0, false}}, nil))
         near, far, center, width, ok := crossing_band(&w, 0)
         testing.expect(t, ok && far-near == 4 && stop_line_distance(&w, 0) == near-1)
         testing.expect(t, width == x[0]+x[1] && center == (x[1]-x[0])*0.5)
@@ -49,7 +49,7 @@ test_reservation_at_bar_straight_lead_through_band_then_mouth_turn :: proc(t: ^t
         init(&w, []Node{{{-60,0}}, {{0,0}}, {{0,60}}, {{60,0}}, {{0,-60}}}, []Road{
             {0,1,4,8}, {1,0,4,8}, {1,2,4,8}, {2,1,4,8}, {1,3,4,8}, {3,1,4,8}, {1,4,4,8}, {4,1,4,8},
         })
-        testing.expect(t, configure(&w, []Signal_Plan{{1,100,1,1,0}}, []Spawn_Point{{0,2,86400,kind}}))
+        testing.expect(t, configure(&w, []Signal_Plan{{1,100,1,1,0, false}}, []Spawn_Point{{0,2,86400,kind}}))
         entry := entry_distance(&w, 0, kind)
         near, far, _, _, ok := crossing_band(&w, 0)
         testing.expect(t, ok && entry+kind_length(kind)*0.5 < near)
@@ -99,8 +99,8 @@ test_crossing_short_and_overlapping_layouts_are_explicit :: proc(t: ^testing.T) 
         {0,1,6,8}, {1,2,6,8}, {3,0,6,8}, {4,1,6,8}, {1,0,6,8},
     })
     defer destroy(&w)
-    base := []Signal_Plan{{1,100,1,1,0}}
-    proposed := []Signal_Plan{{0,100,1,1,0}, {1,100,1,1,0}}
+    base := []Signal_Plan{{1,100,1,1,0, false}}
+    proposed := []Signal_Plan{{0,100,1,1,0, false}, {1,100,1,1,0, false}}
     testing.expect(t, configure(&w, base, nil))
     old_line := w.stop_lines[0]
     _, _, _, _, ok := crossing_band_for_signals(&w, 0, proposed)
@@ -112,7 +112,7 @@ test_crossing_short_and_overlapping_layouts_are_explicit :: proc(t: ^testing.T) 
     init(&short, []Node{{{0,0}}, {{3,0}}}, []Road{{0,1,3,8}})
     defer destroy(&short)
     _, _, _, _, ok = crossing_band(&short, 0)
-    testing.expect(t, !ok && stop_line_for_signals(&short, 0, []Signal_Plan{{1,100,1,1,0}}) < 0)
+    testing.expect(t, !ok && stop_line_for_signals(&short, 0, []Signal_Plan{{1,100,1,1,0, false}}) < 0)
 }
 
 @(test)
@@ -125,7 +125,7 @@ test_uncontrolled_geometry_and_flow_ignore_unauthored_crossings :: proc(t: ^test
     defer destroy(&a)
     defer destroy(&b)
     source := []Spawn_Point{{0,2,1.2,.Motorcycle}}
-    testing.expect(t, configure(&a, nil, source) && configure(&b, []Signal_Plan{{4,100,1,1,0}}, source))
+    testing.expect(t, configure(&a, nil, source) && configure(&b, []Signal_Plan{{4,100,1,1,0, false}}, source))
     legacy := road_length(&a, 0)-junction_setback(&a, 0, false)-1
     testing.expect(t, stop_line_distance(&a, 0) == legacy && stop_line_distance(&b, 0) == legacy)
     testing.expect(t, a.stop_lines[0] == legacy && b.stop_lines[0] == legacy)
@@ -163,8 +163,8 @@ test_fit_cache_is_per_configuration_and_reset :: proc(t: ^testing.T) {
     old, problem := make_connector(&w, Vehicle{road = 0, kind = .Motorcycle}, 1, 0)
     testing.expect(t, problem == .None && len(w.fit_cache) > 0)
     count := len(w.fit_cache)
-    testing.expect(t, !configure(&w, []Signal_Plan{{99,2,1,1,0}}, nil) && len(w.fit_cache) == count)
-    testing.expect(t, configure(&w, []Signal_Plan{{1,100,1,1,0}}, []Spawn_Point{{0,2,86400,.Motorcycle}}) && len(w.fit_cache) == 0)
+    testing.expect(t, !configure(&w, []Signal_Plan{{99,2,1,1,0, false}}, nil) && len(w.fit_cache) == count)
+    testing.expect(t, configure(&w, []Signal_Plan{{1,100,1,1,0, false}}, []Spawn_Point{{0,2,86400,.Motorcycle}}) && len(w.fit_cache) == 0)
     current, why := make_connector(&w, Vehicle{road = 0, kind = .Motorcycle}, 1, 0)
     testing.expect(t, why == .None && current.start.x < old.start.x && current.lead > old.lead)
     destroy(&w)
@@ -183,7 +183,7 @@ test_terminal_clearance_rejects_short_body_space_without_offmap_extension :: pro
         w: World
         init(&w, []Node{{{0,0}}, {{60,0}}, {{60,60}}, {{120,0}}}, []Road{{0,1,c.width,8}, {2,1,c.width,8}})
         if c.forward_pavement { append(&w.roads, Road{1,3,c.width,8}) }
-        testing.expect(t, configure(&w, []Signal_Plan{{1,100,1,1,0}}, []Spawn_Point{{0,1,0.05,c.kind}}))
+        testing.expect(t, configure(&w, []Signal_Plan{{1,100,1,1,0, false}}, []Spawn_Point{{0,1,0.05,c.kind}}))
         step(&w, 0.05)
         w.spawns[0].interval, w.spawn_runtime[0].elapsed = 86400, 0
         if !c.supported {
@@ -233,7 +233,7 @@ test_receiving_red_terminal_bar_is_not_skipped_by_connector :: proc(t: ^testing.
         init(&w, []Node{{{-60,0}}, {{0,0}}, {{21,0}}, {{21,-60}}, {{81,0}}}, []Road{
             {0,1,3,8}, {1,2,3,8}, {3,2,3,8}, {2,4,3,8},
         })
-        testing.expect(t, configure(&w, []Signal_Plan{{2,100,100,100,200}}, []Spawn_Point{{0,destination,0.05,.Bus}}))
+        testing.expect(t, configure(&w, []Signal_Plan{{2,100,100,100,200, false}}, []Spawn_Point{{0,destination,0.05,.Bus}}))
         v := Vehicle{road = 0, kind = .Bus}
         testing.expect(t, signal_state(&w, 1) == .Red && entry_distance(&w, 1, .Bus) == 7)
         _, problem := make_connector(&w, v, 1, 0)

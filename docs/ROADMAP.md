@@ -13,10 +13,10 @@ The current deliverable is a tested Odin/raylib prototype, **not a finished game
 
 ## 2. Implement persistent driver personalities
 
-Opt-in synthetic speed and following-headway distributions are implemented in [DRIVER_BEHAVIOR.md](DRIVER_BEHAVIOR.md). Reaction, amber decisions, filtering, patience and infractions remain unimplemented.
+Opt-in synthetic speed, following-headway, aggressiveness, patience, turn-bias and wander traits are implemented in [DRIVER_BEHAVIOR.md](DRIVER_BEHAVIOR.md). Reaction, amber decisions, opposing-lane filtering and infractions remain unimplemented.
 
-- Add reaction/amber decisions on top of the seeded desired-speed and following-headway distributions. Keep traits persistent and independent of appearance and arrival randomness; retain a fully compliant deterministic baseline.
-- Implement signal compliance, filtering tendency and bounded patience only when their decision and movement models exist. Decide at meaningful events, not with a random coin flip every frame.
+- Add reaction/amber decisions on top of the seeded desired-speed, following-headway, aggressiveness and patience distributions. Keep traits persistent and independent of appearance and arrival randomness; retain a fully compliant deterministic baseline.
+- Implement signal compliance and opposing-lane filtering only when their decision and movement models exist. Decide at meaningful events, not with a random coin flip every frame.
 - Add continuous lateral filtering and merge/gap acceptance before permitting opposing-lane encroachment or other prohibited maneuvers. Source lateral slots are not lane changing.
 - Expose only implemented controls in XML/UI. Add separate attempted, completed and blocked infraction counters. Clearing a light already entered legally must not count as a new violation; crashes need explicit mechanics rather than numerical overlap.
 

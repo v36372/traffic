@@ -4,13 +4,14 @@ package sim
 // baseline speed. Headway changes preference, not physical body clearance.
 Driver_Range :: struct { speed_min, speed_max, headway_min, headway_max: f32 }
 Driver_Persona :: enum { Balanced, Cautious, Assertive }
-Driver_Mode :: enum { Cruising, Following, Stopped_Signal, Passing, Junction, Following_Junction }
+Driver_Mode :: enum { Cruising, Following, Stopped_Signal, Passing, Junction, Following_Junction, Seeking, Filtering }
 Driver :: struct {
     traits: Driver_Traits,
     persona: Driver_Persona,
     kind: Vehicle_Kind,
     mode: Driver_Mode,
     side: f32,
+    aggressiveness, patience, turn_bias, wander, waited: f32,
 }
 Driver_Config :: struct {
     enabled: bool,
@@ -40,6 +41,14 @@ valid_driver_config :: proc(config: Driver_Config) -> bool {
     return true
 }
 
+behavior_varied :: proc(config: Driver_Config) -> bool {
+    if !config.enabled { return false }
+    for r in config.classes {
+        if r.speed_min != r.speed_max || r.headway_min != r.headway_max { return true }
+    }
+    return false
+}
+
 // A value-owned trip: no world or shared RNG is retained. IDs must be nonzero.
 make_driver :: proc(config: Driver_Config, seed, id: u64, kind: Vehicle_Kind, persona: Driver_Persona) -> (Driver, bool) {
     if !valid_driver_config(config) || id == 0 || int(kind) < 0 || int(kind) > int(Vehicle_Kind.Tricycle) || int(persona) < 0 || int(persona) > int(Driver_Persona.Assertive) { return {}, false }
@@ -49,7 +58,21 @@ make_driver :: proc(config: Driver_Config, seed, id: u64, kind: Vehicle_Kind, pe
         r := config.classes[int(kind)]
         acceleration: f32 = 2
         if r.speed_min != r.speed_max || r.headway_min != r.headway_max { acceleration = 1.4+1.2*driver_sample(seed, id, 0xa4093822299f31d0) }
-        d.traits = {r.speed_min+(r.speed_max-r.speed_min)*driver_sample(seed, id, 0x243f6a8885a308d3), r.headway_min+(r.headway_max-r.headway_min)*driver_sample(seed, id, 0x13198a2e03707344), acceleration}
+        d.traits.speed_factor = r.speed_min+(r.speed_max-r.speed_min)*driver_sample(seed, id, 0x243f6a8885a308d3)
+        d.traits.headway = r.headway_min+(r.headway_max-r.headway_min)*driver_sample(seed, id, 0x13198a2e03707344)
+        d.traits.acceleration = acceleration
+        if behavior_varied(config) {
+            lo, hi: f32 = 0.25, 0.7
+            switch persona {
+            case .Cautious: lo, hi = 0.05, 0.35
+            case .Assertive: lo, hi = 0.6, 1
+            case .Balanced:
+            }
+            d.aggressiveness = lo+(hi-lo)*driver_sample(seed, id, 0xbe54646cf34e90c6)
+            d.patience = 0.45+(1-d.aggressiveness)*3.4
+            d.turn_bias = (driver_sample(seed, id, 0x3c6ef372fe94f82b)*2-1)*(0.35+0.65*d.aggressiveness)
+            if kind == .Motorcycle { d.wander = 0.08+0.42*d.aggressiveness }
+        }
     }
     return d, true
 }
@@ -62,7 +85,39 @@ passing_advantage :: proc(d: Driver) -> f32 {
     case .Balanced:
     }
     if d.kind == .Bus || d.kind == .Truck { threshold += 0.5 }
+    if (d.kind == .Motorcycle || d.kind == .Bicycle) && d.aggressiveness > 0 {
+        threshold -= 0.7*d.aggressiveness
+        threshold = max(threshold, 0.05)
+    }
+    if d.patience > 0 && d.waited >= d.patience {
+        threshold *= 0.5
+        if d.kind == .Motorcycle { threshold = min(threshold, 0.12) }
+    }
     return threshold
+}
+
+gap_horizon :: proc(d: Driver) -> f32 {
+    if d.aggressiveness <= 0 || (d.kind != .Motorcycle && d.kind != .Bicycle) { return 1.5 }
+    return 1.5-0.55*d.aggressiveness
+}
+
+pass_length :: proc(v: Vehicle) -> f32 {
+    length := LANE_CHANGE_LENGTH
+    if v.kind == .Motorcycle && v.driver.aggressiveness > 0 {
+        length = 12-5.5*v.driver.aggressiveness
+        if v.driver.patience > 0 && v.driver.waited >= v.driver.patience { length = min(length, 6) }
+        length = max(length, 5)
+    }
+    return length
+}
+
+driver_should_pass :: proc(v: Vehicle) -> bool {
+    if v.driver.mode == .Following || v.driver.mode == .Seeking { return true }
+    return v.kind == .Motorcycle && v.driver.aggressiveness > 0 && v.driver.mode == .Stopped_Signal
+}
+
+motorcycle_may_cut :: proc(v: Vehicle) -> bool {
+    return v.kind == .Motorcycle && v.driver.aggressiveness >= 0.55
 }
 
 // Synthetic damped gap/closing-speed control, shared by links and connectors.
@@ -103,12 +158,18 @@ update_driver_mode :: proc(w: ^World, i: int) {
     mode := Driver_Mode.Cruising
     if v.motion.active {
         mode = .Junction
-        if !local_gap_clear(w, v, i, v.speed) { mode = .Following_Junction }
-    } else if v.lane.active { mode = .Passing
+        if !local_gap_clear(w, v, i, v.speed, gap_horizon(v.driver)) { mode = .Following_Junction }
+    } else if v.lane.active {
+        mode = .Passing
+        if v.lane.length > 0 && v.lane.length < LANE_CHANGE_LENGTH { mode = .Filtering }
     } else if (signal_state(w, v.road) == .Red || signal_state(w, v.road) == .Amber) && v.speed < 0.1 && v.distance >= entry_distance(w, v.road, v.kind)-0.2 { mode = .Stopped_Signal
     } else {
         for lead, j in w.vehicles {
-            if i != j && lead.road == v.road && !lead.motion.active && lead.distance > v.distance && lead.distance-v.distance < 35 && abs(lead.lateral-v.lateral) < (kind_width(lead.kind)+kind_width(v.kind))*0.5+0.18 { mode = .Following; break }
+            if i != j && lead.road == v.road && !lead.motion.active && lead.distance > v.distance && lead.distance-v.distance < 35 && abs(lead.lateral-v.lateral) < (kind_width(lead.kind)+kind_width(v.kind))*0.5+0.18 {
+                mode = .Following
+                if v.driver.patience > 0 && v.driver.waited >= v.driver.patience { mode = .Seeking }
+                break
+            }
         }
     }
     w.vehicles[i].driver.mode = mode
@@ -116,13 +177,7 @@ update_driver_mode :: proc(w: ^World, i: int) {
 
 // Varied configurations assign a stable synthetic persona to each trip.
 spawn_persona :: proc(config: Driver_Config, seed, id: u64) -> Driver_Persona {
-    if config.enabled {
-        for r in config.classes {
-            if r.speed_min != r.speed_max || r.headway_min != r.headway_max {
-                return Driver_Persona(int(driver_sample(seed, id, 0x452821e638d01377)*3))
-            }
-        }
-    }
+    if behavior_varied(config) { return Driver_Persona(int(driver_sample(seed, id, 0x452821e638d01377)*3)) }
     return .Balanced
 }
 

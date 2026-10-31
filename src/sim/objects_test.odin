@@ -1,5 +1,6 @@
 package sim
 
+import "core:math"
 import "core:testing"
 
 @(test)
@@ -7,7 +8,7 @@ test_signal_phases_and_offset :: proc(t: ^testing.T) {
     w: World
     init(&w, []Node{{{0,0}}, {{10,0}}, {{10,10}}, {{20,0}}}, []Road{{0,1,4,8}, {2,1,4,8}, {1,3,4,8}})
     defer destroy(&w)
-    testing.expect(t, configure(&w, []Signal_Plan{{1, 2, 1, 1, 1}}, nil))
+    testing.expect(t, configure(&w, []Signal_Plan{{1, 2, 1, 1, 1, false}}, nil))
     testing.expect(t, signal_state(&w, 0) == .Green && signal_state(&w, 1) == .Red)
     w.time = 1; testing.expect(t, signal_state(&w, 0) == .Amber)
     w.time = 2; testing.expect(t, signal_state(&w, 0) == .Red && signal_state(&w, 1) == .Red)
@@ -17,11 +18,50 @@ test_signal_phases_and_offset :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_make_signal_timings_countdown_and_remaining :: proc(t: ^testing.T) {
+    spec := default_signal_spec()
+    testing.expect(t, spec.green == 8 && spec.amber == 3 && spec.clearance == 2 && spec.offset == 0 && !spec.countdown)
+    spec.node = 1
+    spec.green, spec.amber, spec.clearance, spec.offset = 4, 2, 1, 0
+    spec.countdown = true
+    plan, ok := make_signal(spec)
+    testing.expect(t, ok && plan.countdown && plan.green == 4 && plan.amber == 2 && plan.clearance == 1)
+    bad := spec
+    bad.green = 0
+    _, bad_ok := make_signal(bad)
+    testing.expect(t, !bad_ok)
+    bad = spec
+    bad.node = -1
+    _, bad_ok = make_signal(bad)
+    testing.expect(t, !bad_ok)
+    w: World
+    init(&w, []Node{{{0,0}}, {{40,0}}, {{40,40}}, {{80,0}}}, []Road{{0,1,4,8}, {2,1,4,8}, {1,3,4,8}})
+    defer destroy(&w)
+    testing.expect(t, configure(&w, []Signal_Plan{plan}, nil) && w.signals[0].countdown)
+    state, remaining, got, found := signal_phase(&w, 0)
+    testing.expect(t, found && got.countdown && state == .Green && math.abs(remaining-4) < 0.001)
+    testing.expect(t, signal_countdown_seconds(remaining) == 4)
+    w.time = 3.2
+    state, remaining, _, _ = signal_phase(&w, 0)
+    testing.expect(t, state == .Green && remaining > 0.79 && remaining < 0.81)
+    testing.expect(t, signal_countdown_seconds(remaining) == 1)
+    w.time = 4
+    state, remaining, _, _ = signal_phase(&w, 0)
+    testing.expect(t, state == .Amber && math.abs(remaining-2) < 0.001)
+    w.time = 7
+    state, remaining, _, _ = signal_phase(&w, 0)
+    other, other_left, _, _ := signal_phase(&w, 1)
+    testing.expect(t, state == .Red && other == .Green)
+    testing.expect(t, remaining > other_left && remaining <= 4+2+1+4)
+    testing.expect(t, signal_countdown_seconds(0) == 0 && signal_countdown_seconds(-1) == 0)
+}
+
+@(test)
 test_signal_stop_release_and_committed :: proc(t: ^testing.T) {
     w: World
     init(&w, []Node{{{0,0}}, {{30,0}}, {{30,30}}, {{60,0}}}, []Road{{0,1,4,8}, {2,1,4,8}, {1,3,4,8}})
     defer destroy(&w)
-    testing.expect(t, configure(&w, []Signal_Plan{{1, 2, 1, 1, 2}}, []Spawn_Point{{0,3,86400,.Car}}))
+    testing.expect(t, configure(&w, []Signal_Plan{{1, 2, 1, 1, 2, false}}, []Spawn_Point{{0,3,86400,.Car}}))
     append(&w.vehicles, Vehicle{road = 0, distance = entry_distance(&w, 0, .Car)-6, speed = 8, kind = .Car})
     // Amber, then red: front must remain behind the line.
     for _ in 0..<35 { step(&w, 0.05) }
@@ -52,7 +92,7 @@ test_routes_rollback_and_demand :: proc(t: ^testing.T) {
     testing.expect(t, !configure(&a, nil, spawn))
     testing.expect(t, a.spawns[0].destination == 3)
     testing.expect(t, !configure(&a, nil, []Spawn_Point{{0,0,1,.Car}}))
-    testing.expect(t, !configure(&a, []Signal_Plan{{1,1,1,1,0}, {1,1,1,1,0}}, nil))
+    testing.expect(t, !configure(&a, []Signal_Plan{{1,1,1,1,0, false}, {1,1,1,1,0, false}}, nil))
     for _ in 0..<4000 {
         step(&a, 0.05); step(&b, 0.05)
         testing.expect(t, a.requested == a.spawned + a.pending)
@@ -69,7 +109,7 @@ test_short_controlled_approach_rejected :: proc(t: ^testing.T) {
     w: World
     init(&w, []Node{{{0,0}}, {{2,0}}, {{2,10}}, {{20,0}}}, []Road{{0,1,3,8}, {2,1,3,8}, {1,3,3,8}})
     defer destroy(&w)
-    testing.expect(t, !configure(&w, []Signal_Plan{{1,2,1,1,0}}, []Spawn_Point{{0,3,0.05,.Bus}}))
+    testing.expect(t, !configure(&w, []Signal_Plan{{1,2,1,1,0, false}}, []Spawn_Point{{0,3,0.05,.Bus}}))
 }
 
 @(test)
@@ -77,7 +117,7 @@ test_submillimetre_controlled_approach_rejected :: proc(t: ^testing.T) {
     w: World
     init(&w, []Node{{{0,0}}, {{0.0005,0}}, {{0,10}}, {{20,0}}}, []Road{{0,1,3,8}, {2,1,3,8}, {1,3,3,8}})
     defer destroy(&w)
-    testing.expect(t, !configure(&w, []Signal_Plan{{1,2,1,1,0}}, []Spawn_Point{{0,3,86400,.Car}}))
+    testing.expect(t, !configure(&w, []Signal_Plan{{1,2,1,1,0, false}}, []Spawn_Point{{0,3,86400,.Car}}))
 }
 
 @(test)
@@ -86,7 +126,7 @@ test_short_long_vehicle_source_pending_is_explicit :: proc(t: ^testing.T) {
     // behind its upstream bar; keep pending/diagnostic rather than spawning.
     nodes := []Node{{{0,0}}, {{11,0}}, {{11,20}}, {{41,0}}}
     roads := []Road{{0,1,3,8}, {2,1,3,8}, {1,3,3,8}}
-    plan := []Signal_Plan{{1,2,1,1,0}}
+    plan := []Signal_Plan{{1,2,1,1,0, false}}
     w: World
     init(&w, nodes, roads, 34)
     defer destroy(&w)
@@ -124,7 +164,7 @@ test_short_source_policy_matches_terminal_and_continuing_routes :: proc(t: ^test
     for destination in destinations {
         w: World
         init(&w, []Node{{{0,0}}, {{11,0}}, {{11,20}}, {{41,0}}}, []Road{{0,1,3,8}, {2,1,3,8}, {1,3,3,8}})
-        testing.expect(t, configure(&w, []Signal_Plan{{1,2,1,1,0}}, []Spawn_Point{{0,destination,0.05,.Bus}}))
+        testing.expect(t, configure(&w, []Signal_Plan{{1,2,1,1,0, false}}, []Spawn_Point{{0,destination,0.05,.Bus}}))
         exit := destination == 1 ? -1 : 2
         testing.expect(t, entry_distance(&w, 0, .Bus) < 0 && successor(&w, Vehicle{road = 0, kind = .Bus}) == exit)
         step(&w, 0.05)
@@ -146,7 +186,7 @@ test_long_terminal_source_red_queue_and_green_completion :: proc(t: ^testing.T) 
     w: World
     init(&w, []Node{{{0,0}}, {{60,0}}, {{60,60}}, {{120,0}}}, []Road{{0,1,6,8}, {2,1,6,8}, {1,3,6,8}})
     defer destroy(&w)
-    testing.expect(t, configure(&w, []Signal_Plan{{1,100,1,1,0}}, []Spawn_Point{{0,1,0.05,.Bus}}))
+    testing.expect(t, configure(&w, []Signal_Plan{{1,100,1,1,0, false}}, []Spawn_Point{{0,1,0.05,.Bus}}))
     step(&w, 0.05)
     testing.expect(t, w.spawned == 1 && len(w.vehicles) == 1 && w.pending == 0 && len(w.motion_issues) == 0)
     w.spawns[0].interval = 86400

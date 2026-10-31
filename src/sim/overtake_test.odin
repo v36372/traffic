@@ -253,3 +253,29 @@ test_near_end_yielding_rear_recovers :: proc(t: ^testing.T) {
         testing.expect(t, !w.vehicles[pi].lane.active && w.vehicles[pi].distance > 68.579)
     }
 }
+
+@(test)
+test_impatient_motorcycle_takes_small_gap_after_waiting :: proc(t: ^testing.T) {
+    w: World
+    passing_world(&w, false)
+    defer destroy(&w)
+    cache_geometry(&w)
+    w.vehicles[0].speed = 8.2
+    w.vehicles[1].driver = {
+        persona = .Cautious, kind = .Motorcycle, side = -1, aggressiveness = 0.2, patience = 0.5,
+        traits = {speed_factor = 1, headway = 0.8, acceleration = 2},
+    }
+    try_overtake(&w, 1)
+    testing.expect(t, !w.vehicles[1].lane.active)
+    w.vehicles[1].driver.waited = 0.5
+    try_overtake(&w, 1)
+    testing.expect(t, w.vehicles[1].lane.active && w.vehicles[1].lane.length == 6)
+    testing.expect(t, w.vehicles[1].driver.mode == .Filtering)
+}
+
+@(test)
+test_assertive_motorcycle_may_cut_occupied_band :: proc(t: ^testing.T) {
+    testing.expect(t, motorcycle_may_cut(Vehicle{kind = .Motorcycle, driver = {aggressiveness = 0.9}}))
+    testing.expect(t, !motorcycle_may_cut(Vehicle{kind = .Motorcycle, driver = {aggressiveness = 0.2}}))
+    testing.expect(t, !motorcycle_may_cut(Vehicle{kind = .Car, driver = {aggressiveness = 0.9}}))
+}

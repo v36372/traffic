@@ -89,7 +89,7 @@ authored_maps_use_the_same_runtime :: proc(t: ^testing.T) {
             configured := sim.configure(&world, signals[:], spawns[:]) && sim.configure_drivers(&world, drivers)
             testing.expect(t, configured, "compiled objects must pass runtime topology validation")
             if name == "intersection" {
-                testing.expect(t, len(world.signals) > 0 && len(world.spawns) > 0, "intersection exercises operational objects")
+                testing.expect(t, len(world.signals) == 1 && world.signals[0].countdown && len(world.spawns) > 0, "default intersection is a signalized four-way with countdown heads")
             }
             for _ in 0..<2400 {
                 sim.step(&world, 0.05)
@@ -100,6 +100,11 @@ authored_maps_use_the_same_runtime :: proc(t: ^testing.T) {
             }
             if len(spawns) > 0 {
                 testing.expect(t, world.completed > 0, "configured trips must reach their destinations")
+            }
+            if name == "intersection" {
+                for issue in world.motion_issues {
+                    testing.expect(t, issue.problem != .U_Turn, "two-wheeler U-turns on the default four-way must fit")
+                }
             }
             testing.expect(t, world.spawned > 0, "authored streets must admit traffic")
             fmt.printf("Authored %s: nodes=%d roads=%d buildings=%d spawned=%d\n", name, len(nodes), len(roads), len(buildings), world.spawned)

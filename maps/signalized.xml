@@ -8,7 +8,7 @@
   <road from="center" to="east" width="4" speed="10" direction="oneway"/>
   <road id="south-in" from="south" to="center" width="4" speed="10" direction="oneway"/>
   <road from="center" to="north" width="4" speed="10" direction="oneway"/>
-  <signal id="crossroads" node="center" green="10" amber="2" clearance="1" offset="0"/>
+  <signal id="crossroads" node="center" green="10" amber="3" clearance="2" offset="0" countdown="true"/>
   <spawn id="eastbound" road="west-in" destination="east" interval="3" kind="bus"/>
   <spawn id="northbound" road="south-in" destination="north" interval="2" kind="bicycle"/>
 </map>

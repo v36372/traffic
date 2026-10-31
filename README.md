@@ -17,7 +17,7 @@ The first `make build` downloads checksum-pinned **raylib 6.0** and builds it st
 
 `make test` runs simulation, map-loader, integration, frontend geometry, and offline importer checks. `make smoke` builds and renders a short automatic smoke test (requires a display). `make check` type-checks the application. Output binaries live under `build/`.
 
-The default scene is **Lantern Quarter**, an authored six-block neighborhood with 123 buildings and scheduled synthetic traffic. It starts after a 60-second simulation warmup, focused on a busy junction; Home shows the full neighborhood. B opens the small diagnostic junction. See [showcase assumptions](docs/SHOWCASE.md).
+The default scene is a **signalized four-way** with mixed vehicle types and left, through, right and U-turn movements, including some U-turns before the box. Pole-mounted 3D heads show red, amber and green; authored `countdown` adds the LED timer module. It starts after a 30-second warmup, looking at the crossing; Home shows the full map. `make run-map MAP=showcase` loads **Lantern Quarter**, the six-block neighborhood (60-second warmup, west-crossing camera). B opens the small diagnostic junction. See [showcase assumptions](docs/SHOWCASE.md).
 
 `--map data/hcm.csv` loads the real Bến Thành-area OpenStreetMap extract: 389 nodes and 538 directed road segments, roughly a 550 m square before boundary-spanning ways. This is a technical sample, not the proposed full district. **No demand is calibrated to real traffic.** See [map provenance and importer instructions](docs/MAP.md).
 
@@ -64,6 +64,7 @@ Edit the XML files under `maps/` to define street nodes, directed/two-way roads,
 
 ```sh
 make run-map MAP=intersection
+make run-map MAP=showcase
 make run-map MAP=bottleneck
 make run-map MAP=downtown
 ```
@@ -72,7 +73,7 @@ make run-map MAP=downtown
 
 ## Traffic signals and scheduled trips
 
-XML now supports `<signal>` junction controllers and `<spawn>` typed arrival sources with destination nodes. Signals cycle one approach at a time through green, amber and all-red clearance; vehicles stop before the line and resume on green. Configured trips use finite width-compatible routes. Demand blocked by queues or the 120-vehicle cap remains pending rather than disappearing. Try `make run-map MAP=signalized`.
+XML now supports `<signal>` junction controllers and `<spawn>` typed arrival sources with destination nodes. Build a plan with `sim.make_signal` / `default_signal_spec`: green, amber and all-red clearance seconds, cycle offset, and `countdown` for remaining-time digits. Signals cycle one approach at a time; vehicles stop before the line and resume on green. Configured trips use finite width-compatible routes. Demand blocked by queues or the 120-vehicle cap remains pending rather than disappearing. Try `make run-map MAP=signalized`.
 
 Maps without authored sources retain the explicit random synthetic-demand mode. Maps without signal definitions remain uncontrolled; the HCMC extract has no invented signal plans. Reset preserves configured objects and restarts their clocks. Present-but-invalid object files reject the map load instead of silently removing controls.
 

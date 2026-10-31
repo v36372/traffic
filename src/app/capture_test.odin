@@ -73,9 +73,9 @@ test_capture_cadence_and_seeded_clock_equivalence :: proc(t: ^testing.T) {
     defer sim.destroy(&smoke)
     defer sim.destroy(&sequence)
     defer sim.destroy(&reference)
-    testing.expect(t, warmup_scene(&smoke, false, true, 1.25) == 25)
-    testing.expect(t, warmup_scene(&sequence, false, true, 1.25) == 25)
-    testing.expect(t, warmup_scene(&reference, false, false, 1.25) == 25)
+    testing.expect(t, warmup_scene(&smoke, .Fitted, true, 1.25) == 25)
+    testing.expect(t, warmup_scene(&sequence, .Fitted, true, 1.25) == 25)
+    testing.expect(t, warmup_scene(&reference, .Fitted, false, 1.25) == 25)
     smoke_poses, sequence_poses := make(Render_Poses), make(Render_Poses)
     defer delete(smoke_poses)
     defer delete(sequence_poses)
@@ -95,8 +95,8 @@ test_capture_cadence_and_seeded_clock_equivalence :: proc(t: ^testing.T) {
     testing.expect(t, math.abs(sequence.time-11.25) < 0.0001)
     // Explicit warmup overrides both defaults and rounds to the common tick grid.
     testing.expect(t, reset_world(&smoke))
-    testing.expect(t, warmup_scene(&smoke, true, true, 0) == 0 && smoke.time == 0)
-    testing.expect(t, warmup_scene(&smoke, true, false, 0.126) == 3)
+    testing.expect(t, warmup_scene(&smoke, .Showcase, true, 0) == 0 && smoke.time == 0)
+    testing.expect(t, warmup_scene(&smoke, .Showcase, false, 0.126) == 3)
 }
 
 @(test)
@@ -124,7 +124,7 @@ test_scaled_sources_are_transactional_and_reset_keeps_intervals :: proc(t: ^test
     for node, i in scaled.nodes { testing.expect(t, node == quiet.nodes[i]) }
     for road, i in scaled.roads { testing.expect(t, road == quiet.roads[i]) }
     buildings: Building_Scene
-    testing.expect(t, scene_entry_view(&scaled, &buildings, false) == scene_entry_view(&quiet, &buildings, false))
+    testing.expect(t, scene_entry_view(&scaled, &buildings, .Fitted) == scene_entry_view(&quiet, &buildings, .Fitted))
     for _ in 0..<200 { sim.step(&scaled, f32(TICK)); sim.step(&manual, f32(TICK)); sim.step(&quiet, f32(TICK)) }
     expect_same_traffic(t, &scaled, &manual)
     testing.expect(t, scaled.requested > quiet.requested)

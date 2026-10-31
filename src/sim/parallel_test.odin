@@ -104,7 +104,7 @@ test_parallel_commitment_clears_but_red_band_must_wait :: proc(t: ^testing.T) {
     w: World
     init(&w, []Node{{{-60,0}}, {{0,0}}, {{60,0}}, {{0,-60}}}, []Road{{0,1,3.5,8}, {1,2,3.5,8}, {3,1,3.5,8}})
     defer destroy(&w)
-    testing.expect(t, configure(&w, []Signal_Plan{{1,100,1,1,0}}, []Spawn_Point{{0,2,86400,.Motorcycle}}))
+    testing.expect(t, configure(&w, []Signal_Plan{{1,100,1,1,0, false}}, []Spawn_Point{{0,2,86400,.Motorcycle}}))
     for band in 0..<2 {
         lateral := source_lateral(3.5, .Motorcycle, band)
         append(&w.vehicles, Vehicle{road = 0, distance = entry_distance(&w, 0, .Motorcycle), lateral = lateral,

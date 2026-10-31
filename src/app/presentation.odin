@@ -34,24 +34,50 @@ interpolated_vehicle_pose :: proc(world: ^sim.World, vehicle: sim.Vehicle, previ
     return
 }
 
-is_showcase_map :: proc(path: string) -> bool {
+Scene_Profile :: enum { Fitted, Showcase, Intersection }
+
+same_map_path :: proc(path, expected: string) -> bool {
     actual, actual_error := filepath.abs(path)
     defer delete(actual)
-    expected, expected_error := filepath.abs(DEFAULT_MAP_PATH)
-    defer delete(expected)
-    return actual_error == nil && expected_error == nil && actual == expected
+    want, want_error := filepath.abs(expected)
+    defer delete(want)
+    return actual_error == nil && want_error == nil && actual == want
 }
 
-// Authored showcase entry composition, not a whole-map fit. The west signalized
-// crossing and market-facing blocks occupy ~150m horizontally. Home deliberately
-// keeps the separate full-scene overview; physical vehicle/signal sizes are fixed.
-scene_entry_view :: proc(world: ^sim.World, buildings: ^Building_Scene, showcase: bool, aspect: f32 = 1.6) -> View {
-    if !showcase { return fit_scene_view(world, buildings, aspect) }
-    return View{
-        target = {-45, 0, 0}, yaw = -0.12, pitch = 1.30,
-        distance = 150/(2*math.tan(f32(math.PI/8))*math.max(aspect, 0.1)),
-        extent = 150,
+is_showcase_map :: proc(path: string) -> bool {
+    return same_map_path(path, SHOWCASE_MAP_PATH)
+}
+
+is_default_map :: proc(path: string) -> bool {
+    return same_map_path(path, DEFAULT_MAP_PATH)
+}
+
+scene_profile :: proc(path: string) -> Scene_Profile {
+    if is_showcase_map(path) { return .Showcase }
+    if is_default_map(path) { return .Intersection }
+    return .Fitted
+}
+
+// Authored entry compositions, not whole-map fits. Home keeps the separate
+// full-scene overview; physical vehicle/signal sizes are fixed.
+scene_entry_view :: proc(world: ^sim.World, buildings: ^Building_Scene, profile: Scene_Profile, aspect: f32 = 1.6) -> View {
+    switch profile {
+    case .Showcase:
+        return View{
+            target = {-45, 0, 0}, yaw = -0.12, pitch = 1.30,
+            distance = 150/(2*math.tan(f32(math.PI/8))*math.max(aspect, 0.1)),
+            extent = 150,
+        }
+    case .Intersection:
+        return View{
+            target = {0, 0, 0}, yaw = -0.08, pitch = 1.22,
+            distance = 110/(2*math.tan(f32(math.PI/8))*math.max(aspect, 0.1)),
+            extent = 110,
+        }
+    case .Fitted:
+        return fit_scene_view(world, buildings, aspect)
     }
+    return fit_scene_view(world, buildings, aspect)
 }
 
 // Raylib's default 0.05m near plane gives <1 24-bit depth unit between our
@@ -64,9 +90,13 @@ camera_clip_planes :: proc(view: View) -> (near, far: f64) {
     return
 }
 
-warmup_scene :: proc(world: ^sim.World, showcase, smoke: bool, seconds: f64 = -1) -> int {
+warmup_scene :: proc(world: ^sim.World, profile: Scene_Profile, smoke: bool, seconds: f64 = -1) -> int {
     ticks := 0
-    if showcase { ticks = 1200 } else if smoke { ticks = 400 }
+    switch profile {
+    case .Showcase: ticks = 1200
+    case .Intersection: ticks = 600
+    case .Fitted: if smoke { ticks = 400 }
+    }
     if seconds >= 0 { ticks = int(math.round(seconds/TICK)) }
     // Advance the same seeded simulation in normal and capture launches. Never
     // inject display-only traffic; explicit fixtures/reset retain their zero start.

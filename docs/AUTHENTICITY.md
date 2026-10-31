@@ -1,6 +1,6 @@
 # HCMC authenticity: acceptance gate and evidence
 
-**Status: target not met.** The latest independent review requests changes. The initial reference-driven work window has ended; no implementation agents or recurring work remain active. Remaining implementation priorities are consolidated in [ROADMAP.md](ROADMAP.md). Driver variation is [proposed, not implemented](DRIVER_BEHAVIOR.md).
+**Status: target not met.** The latest independent review requests changes. The initial reference-driven work window has ended; no implementation agents or recurring work remain active. Remaining implementation priorities are consolidated in [ROADMAP.md](ROADMAP.md). Seeded driver variation is documented in [DRIVER_BEHAVIOR.md](DRIVER_BEHAVIOR.md).
 
 ## Goal and evidence standard
 
@@ -86,6 +86,6 @@ Detailed geometry, cache and kinematic limits are in [src/sim/MOTION.md](../src/
 
 ## Next work
 
-The prioritized [roadmap](ROADMAP.md) starts with actual moving-group compatibility and straight-through speed policy, then persistent driver traits and real lateral filtering. The user's requested speed/gap/compliance/filtering/patience controls remain planned, not implemented. Intentional, observable infractions must not be used to relabel physical bugs as Vietnamese traffic behavior.
+The prioritized [roadmap](ROADMAP.md) starts with actual moving-group compatibility and straight-through speed policy, then richer lateral filtering. Seeded speed, gap, aggressiveness, patience and same-carriageway filtering are implemented; signal compliance and opposing-lane cuts remain planned. Intentional, observable infractions must not be used to relabel physical bugs as Vietnamese traffic behavior.
 
 The authenticity goal must not be marked complete until the remaining flow and reference-evidence gaps have been addressed and reviewed again.

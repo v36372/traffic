@@ -96,10 +96,10 @@ test_camera_fits_3d_bounds_at_wide_and_portrait_aspects :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_default_showcase_is_populated_and_debug_scene_remains_available :: proc(t: ^testing.T) {
+test_showcase_is_populated_and_debug_scene_remains_available :: proc(t: ^testing.T) {
     world: sim.World
     defer sim.destroy(&world)
-    testing.expect(t, load_map(&world, DEFAULT_MAP_PATH), "default is a required explicit authored asset, not a demo fallback")
+    testing.expect(t, load_map(&world, SHOWCASE_MAP_PATH), "showcase remains an explicit authored asset")
     if len(world.roads) == 0 { return }
     testing.expect(t, len(world.signals) > 0 && len(world.spawns) > 0)
     testing.expect(t, len(world.spawns) == 11, "current authored benchmark has 11 synthetic sources; regenerate stale sidecars")
@@ -116,10 +116,10 @@ test_default_showcase_is_populated_and_debug_scene_remains_available :: proc(t: 
         }
     }
     testing.expect(t, turn_source, "moto-west-turn is explicit synthetic turn coverage, not measured demand")
-    buildings := load_building_scene(DEFAULT_MAP_PATH)
+    buildings := load_building_scene(SHOWCASE_MAP_PATH)
     defer destroy_building_scene(&buildings)
     testing.expect(t, buildings.count > 0)
-    testing.expect(t, warmup_scene(&world, true, false) == 1200)
+    testing.expect(t, warmup_scene(&world, .Showcase, false) == 1200)
     testing.expect(t, math.abs(world.time-60) < 0.001 && len(world.vehicles) > 0, "arrival view must contain simulated road users at 60 seconds")
     sim.destroy(&world); sim.init_demo(&world)
     offsets := road_offsets(&world)
@@ -127,6 +127,77 @@ test_default_showcase_is_populated_and_debug_scene_remains_available :: proc(t: 
     roads := build_road_scene(&world, offsets)
     defer destroy_road_scene(&roads)
     testing.expect(t, len(roads.layers[2]) > 0 && len(world.signals) == 0 && len(world.spawns) == 0)
+}
+
+@(test)
+test_default_intersection_has_mixed_movements_and_traffic :: proc(t: ^testing.T) {
+    world: sim.World
+    defer sim.destroy(&world)
+    testing.expect(t, load_map(&world, DEFAULT_MAP_PATH), "default is a required explicit authored asset, not a demo fallback")
+    if len(world.roads) == 0 { return }
+    testing.expect(t, len(world.signals) == 1 && world.signals[0].countdown && len(world.spawns) >= 8)
+    kinds: bit_set[sim.Vehicle_Kind]
+    left, through, right, box_uturn, early_uturn := false, false, false, false, false
+    for source, i in world.spawns {
+        kinds += {source.kind}
+        road := world.roads[source.road]
+        _, incoming := sim.vehicle_pose(&world, sim.Vehicle{road = source.road})
+        node := road.to
+        for hops in 0..<8 {
+            next := world.spawn_runtime[i].next[node]
+            if next < 0 { through = true; break }
+            _, outgoing := sim.vehicle_pose(&world, sim.Vehicle{road = next})
+            cross := incoming.x*outgoing.y-incoming.y*outgoing.x
+            along := incoming.x*outgoing.x+incoming.y*outgoing.y
+            if along < -0.95 {
+                if world.nodes[node].position == (sim.Vec2{0, 0}) {
+                    box_uturn = true
+                } else {
+                    early_uturn = true
+                }
+                break
+            } else if cross > 0.2 {
+                left = true
+                break
+            } else if cross < -0.2 {
+                right = true
+                break
+            }
+            incoming = outgoing
+            node = world.roads[next].to
+            if hops == 7 { through = true }
+        }
+    }
+    testing.expect(t, left && through && right && box_uturn && early_uturn,
+        "default four-way must schedule left, through, right, box U-turn and mid-block U-turn")
+    testing.expect(t, .Motorcycle in kinds && .Car in kinds && .Bicycle in kinds && .Tricycle in kinds)
+    buildings := load_building_scene(DEFAULT_MAP_PATH)
+    defer destroy_building_scene(&buildings)
+    testing.expect(t, buildings.count > 0)
+    focus := scene_entry_view(&world, &buildings, .Intersection)
+    home := fit_scene_view(&world, &buildings)
+    testing.expect(t, focus.target == Vec3{0, 0, 0} && focus.extent == 110)
+    testing.expect(t, focus.distance < home.distance)
+    live_left, live_right, live_uturn := false, false, false
+    for _ in 0..<600 {
+        sim.step(&world, f32(TICK))
+        for vehicle in world.vehicles {
+            if !vehicle.motion.active { continue }
+            cross := vehicle.motion.forward.x*vehicle.motion.outgoing.y-vehicle.motion.forward.y*vehicle.motion.outgoing.x
+            along := vehicle.motion.forward.x*vehicle.motion.outgoing.x+vehicle.motion.forward.y*vehicle.motion.outgoing.y
+            if along < -0.95 { live_uturn = true }
+            else if cross > 0.2 { live_left = true }
+            else if cross < -0.2 { live_right = true }
+        }
+    }
+    moving := 0
+    for vehicle in world.vehicles {
+        if vehicle.speed > 0.5 { moving += 1 }
+    }
+    testing.expect(t, live_left && live_right && live_uturn,
+        "arrival window must actually execute left, right and U-turn connectors")
+    testing.expect(t, math.abs(world.time-30) < 0.001 && len(world.vehicles) > 0 && moving > 0,
+        "arrival view must contain moving road users at 30 seconds, not a locked box")
 }
 
 @(test)

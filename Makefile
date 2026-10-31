@@ -1,8 +1,8 @@
 ODIN ?= odin
 LOCAL_ODIN = ODIN_ROOT="$(CURDIR)/build/odin-root" $(ODIN)
 ODINFLAGS = -define:RAYLIB_SHARED=false
-MAP ?= showcase
-CAPTURE_MAP ?= build/maps/showcase.csv
+MAP ?= intersection
+CAPTURE_MAP ?= build/maps/intersection.csv
 
 .PHONY: deps build run maps run-map test check smoke capture clean
 

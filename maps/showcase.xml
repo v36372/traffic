@@ -34,9 +34,9 @@
   <road id="v31" from="n32" to="n31" width="3.5" speed="8" direction="twoway"/>
 
   <!-- Exclusive approaches, staggered along the central corridor. -->
-  <signal id="west-cross" node="n11" green="8" amber="2" clearance="1" offset="0"/>
-  <signal id="east-cross" node="n21" green="8" amber="2" clearance="1" offset="17"/>
-  <signal id="north-gate" node="n12" green="8" amber="2" clearance="1" offset="7"/>
+  <signal id="west-cross" node="n11" green="8" amber="2" clearance="1" offset="0" countdown="true"/>
+  <signal id="east-cross" node="n21" green="8" amber="2" clearance="1" offset="17" countdown="true"/>
+  <signal id="north-gate" node="n12" green="8" amber="2" clearance="1" offset="7" countdown="true"/>
 
   <!-- Synthetic individual preferences, not measured HCMC behavior. -->
   <driver kind="motorcycle" speed_min="0.65" speed_max="1" headway_min="0.5" headway_max="1.5"/>

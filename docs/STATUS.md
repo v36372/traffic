@@ -58,7 +58,7 @@ The independent clip-only A/B review passed the pavement depth-fighting correcti
 
 - The previous independent busy capture showed only one vehicle crossing at a time. The local-gap model needs a new independent footage review. Finite braking can exceed the 4 m/s curve target; local constant-speed prediction can still misjudge dense conflicts and blocked exits.
 - Imported HCMC still uses synthetic demand and has unsupported short-link, U-turn and body-fit cases. Authored routes can also encounter a named unsupported maneuver. The previously held showcase truck now clears in the tested seed, but other vehicle/band combinations can still be unsupported. Counts are not measured traffic rates; no citywide collision/kinematic certification or large-population performance claim.
-- Driver speed and following-headway variation is opt-in and synthetic; signal-compliance, filtering and patience variation remain proposed. No deliberate violation counters or filtering behavior. See [DRIVER_BEHAVIOR.md](DRIVER_BEHAVIOR.md).
+- Driver speed, headway, aggressiveness, patience and turn-style variation is opt-in and synthetic. Signal-compliance, opposing-lane filtering and violation counters remain unimplemented. See [DRIVER_BEHAVIOR.md](DRIVER_BEHAVIOR.md).
 - No pedestrian movement, passenger/bus-service simulation, police management, finance, interactive road construction or dynamic policy editing yet.
 - A normal quiet/off-peak matched intersection reference remains unverified. Historical noon congestion is documented as congestion, not mislabeled as quiet.
 

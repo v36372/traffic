@@ -68,7 +68,7 @@ test_terminal_bus_rejects_front_spill_but_authored_forward_strip_fits :: proc(t:
         world: sim.World
         sim.init(&world, nodes, input[:count])
         defer sim.destroy(&world)
-        testing.expect(t, sim.configure(&world, []sim.Signal_Plan{{1, 100, 1, 1, 0}}, []sim.Spawn_Point{{0, 1, 1, .Bus}}))
+        testing.expect(t, sim.configure(&world, []sim.Signal_Plan{{1, 100, 1, 1, 0, false}}, []sim.Spawn_Point{{0, 1, 1, .Bus}}))
         offsets := road_offsets(&world)
         defer delete(offsets)
         scene := build_road_scene(&world, offsets)

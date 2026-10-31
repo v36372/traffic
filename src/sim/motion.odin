@@ -61,7 +61,7 @@ connector_pose :: proc(c: Connector, distance: f32) -> (p, f: Vec2) {
 }
 
 successor :: proc(w: ^World, v: Vehicle) -> int {
-    if len(w.spawns) == 0 { return next_road(w, v.road) }
+    if len(w.spawns) == 0 { return choose_next_road(w, v) }
     s := w.spawns[v.spawn_index]
     if w.roads[v.road].to == s.destination { return -1 }
     return w.spawn_runtime[v.spawn_index].next[w.roads[v.road].to]
@@ -87,25 +87,93 @@ make_connector :: proc(w: ^World, v: Vehicle, exit: int, lateral: f32) -> (c: Co
     return
 }
 
+uturn_kind :: proc(kind: Vehicle_Kind) -> bool {
+    return kind == .Motorcycle || kind == .Bicycle || kind == .Tricycle
+}
+
+heading_reverses :: proc(incoming, outgoing: Vec2) -> bool {
+    return incoming.x*outgoing.x+incoming.y*outgoing.y < -0.95
+}
+
+connector_is_left :: proc(c: Connector) -> bool {
+    cross := c.forward.x*c.outgoing.y-c.forward.y*c.outgoing.x
+    along := c.forward.x*c.outgoing.x+c.forward.y*c.outgoing.y
+    return cross > 0.2 && along > -0.5
+}
+
+// Two-wheelers may reverse heading with a left-bulging cubic that stays on the
+// incident asphalt. Cars, buses and trucks remain an explicit U_Turn hold.
+fit_uturn_connector :: proc(w: ^World, v: Vehicle, exit: int, lateral: f32) -> (c: Connector, problem: Motion_Problem) {
+    if exit < 0 || !uturn_kind(v.kind) { return c, .U_Turn }
+    length := road_length(w, v.road)
+    if length <= 0.001 { return c, .Degenerate }
+    entry := entry_distance(w, v.road, v.kind)
+    if entry < 0 { return c, .Short_Approach }
+    outgoing := road_length(w, exit)
+    if outgoing <= 0.001 { return c, .Degenerate }
+    end := junction_clearance_distance(w, exit)+kind_length(v.kind)*0.5
+    if end+kind_length(v.kind)*0.5 > outgoing { return c, .Short_Exit }
+    next := v
+    next.road = exit
+    if (successor(w, next) >= 0 || signal_state(w, exit) != .Uncontrolled) && end > entry_distance(w, exit, v.kind) {
+        return c, .Short_Exit
+    }
+    a := v
+    a.motion = {}
+    a.distance = max(entry, v.distance)
+    start, forward := vehicle_pose(w, a)
+    q, g := vehicle_pose(w, Vehicle{road = exit, distance = end, lateral = lateral, kind = v.kind})
+    hull := junction_polygon(w, w.roads[v.road].to)
+    defer delete(hull)
+    for handle in ([]f32{4, 5, 6, 3.2, 7, 8, 2.6}) {
+        first := Vec2{start.x+forward.x*handle, start.y+forward.y*handle}
+        second := Vec2{q.x-g.x*handle, q.y-g.y*handle}
+        candidate := Connector{
+            active = true, node = w.roads[v.road].to, exit = exit, end = end, lateral = lateral,
+            start = start, forward = forward, outgoing = g, controls = {start, first, second, q},
+        }
+        previous := start
+        for i in 1..<len(candidate.arc) {
+            point, _ := bezier_pose(candidate, f32(i)/64)
+            candidate.arc[i] = candidate.arc[i-1]+vec_distance(previous, point)
+            previous = point
+        }
+        candidate.length = candidate.arc[64]
+        if candidate.length <= 0.5 { continue }
+        if connector_on_pavement(w, candidate, v.kind, hull[:]) { return candidate, .None }
+    }
+    return c, .U_Turn
+}
+
 fit_connector :: proc(w: ^World, v: Vehicle, exit: int, lateral: f32) -> (c: Connector, problem: Motion_Problem) {
     _, f := vehicle_pose(w, v)
     g := f
     if exit >= 0 { _, g = vehicle_pose(w, Vehicle{road = exit}) }
+    if heading_reverses(f, g) {
+        if uturn_kind(v.kind) {
+            c, problem = fit_uturn_connector(w, v, exit, lateral)
+            if problem == .None { return }
+        }
+        return {}, .U_Turn
+    }
     left := f.x*g.y-f.y*g.x > 0
     delay: f32
     if left { delay = kind_length(v.kind)*0.5 }
     // On an uncontrolled left turn, start the diagonal approach at the
     // entry line when the whole body fits; rolling gap checks can then stop
-    // the driver partway through the turn for opposing traffic.
+    // the driver partway through the turn for opposing traffic. Wider handles
+    // keep a car in the box instead of snapping 90° at the mouth.
     if left && signal_state(w, v.road) == .Uncontrolled {
         early := max(v.distance, entry_distance(w, v.road, v.kind))-turn_start_distance(w, v.road)
-        candidate, why := connector_candidate(w, v, exit, lateral, early, 1, 0)
-        if why == .None {
-            hull := junction_polygon(w, w.roads[v.road].to)
-            fits := connector_on_pavement(w, candidate, v.kind, hull[:])
-            delete(hull)
-            if fits { return candidate, .None }
+        hull := junction_polygon(w, w.roads[v.road].to)
+        for factor in ([]f32{1, 1.2, 1.4, 0.85}) {
+            candidate, why := connector_candidate(w, v, exit, lateral, early, factor, 0)
+            if why == .None && connector_on_pavement(w, candidate, v.kind, hull[:]) {
+                delete(hull)
+                return candidate, .None
+            }
         }
+        delete(hull)
     }
     c, problem = connector_candidate(w, v, exit, lateral, delay, 1, 0)
     if problem != .None && problem != .Tight_Turn { return }
@@ -297,6 +365,7 @@ source_problem :: proc(w: ^World, v: Vehicle) -> Motion_Problem {
     // will all fail. The shared node admission evaluates those actual choices.
     _, problem := connector_candidate(w, v, exit, 0, 0, 1, 0)
     if problem == .Tight_Turn { return .None }
+    if problem == .U_Turn && uturn_kind(v.kind) { return .None }
     return problem
 }
 
@@ -314,7 +383,7 @@ source_geometry_problem :: proc(w: ^World, v: Vehicle) -> Motion_Problem {
         for lateral in candidates {
             _, problem = make_connector(w, v, exit, lateral)
             if problem == .None { return .None }
-            if problem != .Tight_Turn { break }
+            if problem != .Tight_Turn && problem != .U_Turn { break }
         }
     }
     return problem
@@ -327,12 +396,24 @@ source_supported :: proc(w: ^World, v: Vehicle) -> bool {
     return false
 }
 
+receiving_desired :: proc(w: ^World, v: Vehicle, exit: int, limit: f32) -> f32 {
+    desired := clamp(v.preferred_lateral, -limit, limit)
+    if exit < 0 || v.driver.turn_bias == 0 || (v.kind != .Motorcycle && v.kind != .Bicycle) { return desired }
+    _, incoming := vehicle_pose(w, Vehicle{road = v.road})
+    _, outgoing := vehicle_pose(w, Vehicle{road = exit})
+    cross := incoming.x*outgoing.y-incoming.y*outgoing.x
+    if abs(cross) <= 0.00001 { return desired }
+    inside: f32 = 1
+    if cross < 0 { inside = -1 }
+    return clamp(desired+v.driver.turn_bias*inside*limit, -limit, limit)
+}
+
 connector_laterals :: proc(w: ^World, v: Vehicle, exit: int) -> [dynamic]f32 {
     width := w.roads[v.road].width
     if exit >= 0 { width = w.roads[exit].width }
     limit := max(0, width*0.5-kind_width(v.kind)*0.5)
     if width < kind_width(v.kind) { return nil }
-    desired := clamp(v.preferred_lateral, -limit, limit)
+    desired := receiving_desired(w, v, exit, limit)
     candidates := make([dynamic]f32, 0, 2*len(w.vehicles)+3)
     // Preserve an occupied world-space band across aligned links when it fits.
     // Fitting, local gaps and body checks still decide whether it is usable.
@@ -350,6 +431,15 @@ connector_laterals :: proc(w: ^World, v: Vehicle, exit: int) -> [dynamic]f32 {
         if other.road != exit { continue }
         gap := (kind_width(v.kind)+kind_width(other.kind))*0.5+0.18001
         append(&candidates, clamp(other.lateral-gap, -limit, limit), clamp(other.lateral+gap, -limit, limit))
+    }
+    start := 0
+    if exit >= 0 && len(candidates) > 1 && candidates[0] != desired { start = 1 }
+    for i in start..<len(candidates) {
+        best := i
+        for j in i+1..<len(candidates) {
+            if abs(candidates[j]-desired) < abs(candidates[best]-desired) { best = j }
+        }
+        candidates[i], candidates[best] = candidates[best], candidates[i]
     }
     return candidates
 }
@@ -377,9 +467,11 @@ forecast_vehicle :: proc(w: ^World, v: Vehicle, distance: f32) -> Vehicle {
 // always block regardless of priority. O(n * horizon / 0.05s), capped at 120;
 // use a spatial neighbor index before increasing the population.
 // This constant-speed prediction is not a collision/deadlock proof.
-local_gap_clear :: proc(w: ^World, candidate: Vehicle, ignore: int, speed: f32) -> bool {
-    horizon :: f32(1.5)
+local_gap_clear :: proc(w: ^World, candidate: Vehicle, ignore: int, speed: f32, horizon := f32(1.5)) -> bool {
     p, _ := vehicle_pose(w, candidate)
+    samples := int(horizon/0.05+0.001)
+    if samples < 1 { samples = 1 }
+    if samples > 30 { samples = 30 }
     // Cache only within this read-only query: sequential arbitration can change
     // poses between calls. Keep every 50ms prediction and exact body SAT check.
     poses: [30][2]Vec2
@@ -402,7 +494,7 @@ local_gap_clear :: proc(w: ^World, candidate: Vehicle, ignore: int, speed: f32) 
             b := forecast_vehicle(w, other, 0)
             q, g = vehicle_pose(w, b)
         }
-        for k in 1..=30 {
+        for k in 1..=samples {
             time := f32(k)*0.05
             index := k-1 if speed != 0 else 0
             if index >= predicted {
@@ -415,7 +507,7 @@ local_gap_clear :: proc(w: ^World, candidate: Vehicle, ignore: int, speed: f32) 
                 q, g = vehicle_pose(w, b)
             }
             if body_poses_overlap(poses[index][0], poses[index][1], candidate.kind, q, g, other.kind) { return false }
-            if speed == 0 && other_speed == 0 { break } // All 30 samples are identical.
+            if speed == 0 && other_speed == 0 { break } // All samples are identical.
         }
     }
     return true
@@ -429,20 +521,29 @@ acquire_connector :: proc(w: ^World, i, exit: int) -> bool {
     unfit, geometry_found := false, false
     for lateral in candidates {
         c, problem := make_connector(w, v, exit, lateral)
-        if problem == .Tight_Turn { unfit = true; continue }
+        if problem == .Tight_Turn || problem == .U_Turn { unfit = true; continue }
         if problem != .None { report_motion_issue(w, v, exit, problem); return false }
         geometry_found = true
         c.sequence = w.entry_sequence+1
         trial := v
         trial.motion = c
         // Keep the first geometrically usable band. A temporary conflict is
-        // a reason to yield, not to cut across neighboring riders' bands.
-        if !body_clear(w, trial, i) || !local_gap_clear(w, trial, i, v.speed) { return false }
+        // a reason to yield, not to cut across neighboring riders' bands,
+        // unless an aggressive motorcycle is hunting a free receiving slot.
+        if !body_clear(w, trial, i) || !local_gap_clear(w, trial, i, v.speed, gap_horizon(v.driver)) {
+            if motorcycle_may_cut(v) { continue }
+            return false
+        }
         w.entry_sequence += 1
         w.vehicles[i].motion = c
         return true
     }
-    if unfit && !geometry_found { report_motion_issue(w, v, exit, .Tight_Turn) }
+    if unfit && !geometry_found {
+        _, f := vehicle_pose(w, v)
+        g := f
+        if exit >= 0 { _, g = vehicle_pose(w, Vehicle{road = exit}) }
+        report_motion_issue(w, v, exit, heading_reverses(f, g) ? .U_Turn : .Tight_Turn)
+    }
     return false
 }
 
@@ -477,8 +578,8 @@ move_vehicle :: proc(w: ^World, i: int, budget: f32) -> (travelled: f32, finishe
             trial.distance += amount
             if trial.lane.active {
                 trial.lateral, _ = lane_offset(trial)
-                if !local_gap_clear(w, trial, i, v.speed) { break }
-                if trial.distance >= trial.lane.start+LANE_CHANGE_LENGTH { trial.lane = {} }
+                if !local_gap_clear(w, trial, i, v.speed, gap_horizon(v.driver)) { break }
+                if trial.distance >= trial.lane.start+lane_change_length(trial) { trial.lane = {} }
             }
             if !body_clear(w, trial, i) { break }
             w.vehicles[i] = trial
@@ -488,7 +589,7 @@ move_vehicle :: proc(w: ^World, i: int, budget: f32) -> (travelled: f32, finishe
             amount := min(left, min(0.1, v.motion.length-v.motion.progress))
             trial := v
             trial.motion.progress += amount
-            if !body_clear(w, trial, i) || !local_gap_clear(w, trial, i, v.speed) { break }
+            if !body_clear(w, trial, i) || !local_gap_clear(w, trial, i, v.speed, gap_horizon(v.driver)) { break }
             if trial.motion.progress >= trial.motion.length-0.000001 {
                 if trial.motion.exit < 0 { return travelled+amount, true }
                 trial.road, trial.distance, trial.lateral = trial.motion.exit, trial.motion.end, trial.motion.lateral

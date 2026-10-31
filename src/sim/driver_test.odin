@@ -24,7 +24,10 @@ test_driver_samples_and_configuration :: proc(t: ^testing.T) {
     testing.expect(t, first.traits.speed_factor >= 0.5 && first.traits.speed_factor <= 1 && first.traits.headway >= 0.4 && first.traits.headway <= 2)
     testing.expect(t, first.traits.acceleration >= 1.4 && first.traits.acceleration <= 2.6)
     testing.expect(t, first.traits.acceleration != other.traits.acceleration)
-    testing.expect(t, car.traits == Driver_Traits{1, 0.8, 2})
+    testing.expect(t, first.aggressiveness >= 0.25 && first.aggressiveness <= 0.7)
+    testing.expect(t, first.patience > 0 && first.wander > 0)
+    testing.expect(t, car.traits.speed_factor == 1 && car.traits.headway == 0.8 && car.traits.acceleration == 2)
+    testing.expect(t, car.aggressiveness >= 0.25 && car.aggressiveness <= 0.7)
     original_rng := a.rng
     _, _ = make_driver(config, a.behavior_seed, 1, .Motorcycle, .Balanced)
     testing.expect(t, a.rng == original_rng)
@@ -50,7 +53,7 @@ test_varied_drivers_replay_persist_and_clearance :: proc(t: ^testing.T) {
         testing.expect(t, a.spawned == b.spawned && len(a.vehicles) == len(b.vehicles))
         for v, i in a.vehicles {
             initial, ok := make_driver(a.behavior, a.behavior_seed, v.id, v.kind, spawn_persona(a.behavior, a.behavior_seed, v.id))
-            testing.expect(t, ok && v == b.vehicles[i] && v.driver.traits == initial.traits && v.driver.persona == initial.persona && v.driver.kind == initial.kind && v.driver.side == initial.side)
+            testing.expect(t, ok && v == b.vehicles[i] && v.driver.traits == initial.traits && v.driver.persona == initial.persona && v.driver.kind == initial.kind && v.driver.side == initial.side && v.driver.aggressiveness == initial.aggressiveness && v.driver.wander == initial.wander)
             for other in a.vehicles[i+1:] {
                 testing.expect(t, !bodies_overlap(&a, v, other))
             }
@@ -142,6 +145,7 @@ test_driver_factory_validation_and_independence :: proc(t: ^testing.T) {
     _, ok = make_driver(config, 17, 1, .Car, .Balanced); testing.expect(t, !ok)
     baseline, base_ok := make_driver(Driver_Config{}, 17, 1, .Car, .Balanced)
     testing.expect(t, base_ok && baseline.traits == Driver_Traits{1, 0.8, 2})
+    testing.expect(t, baseline.aggressiveness == 0 && baseline.wander == 0)
 }
 
 @(test)
@@ -199,6 +203,13 @@ test_driver_modes_track_maneuvers :: proc(t: ^testing.T) {
     try_overtake(&w, 1); testing.expect(t, w.vehicles[1].driver.mode == .Passing)
     w.vehicles[1].lane = {}; w.vehicles[0].distance = 100
     update_driver_mode(&w, 1); testing.expect(t, w.vehicles[1].driver.mode == .Cruising)
+    w.vehicles[0].distance = 55
+    w.vehicles[1].driver.patience, w.vehicles[1].driver.waited = 1, 1
+    update_driver_mode(&w, 1); testing.expect(t, w.vehicles[1].driver.mode == .Seeking)
+    w.vehicles[1].driver.waited = 0
+    w.vehicles[1].lane = {active = true, start = 30, from = 0, to = 1, length = 6}
+    update_driver_mode(&w, 1); testing.expect(t, w.vehicles[1].driver.mode == .Filtering)
+    w.vehicles[1].lane = {}
     w.vehicles[1].motion.active = true
     update_driver_mode(&w, 1); testing.expect(t, w.vehicles[1].driver.mode == .Junction)
     w.vehicles[1].motion = {}
@@ -247,4 +258,59 @@ test_spawn_personas_are_mixed_and_stable :: proc(t: ^testing.T) {
     testing.expect(t, seen[0] && seen[1] && seen[2])
     config = default_driver_config(); config.enabled = true
     for id in u64(1)..=u64(20) { testing.expect(t, spawn_persona(config, 22, id) == .Balanced) }
+}
+
+@(test)
+test_aggressiveness_bands_and_patience_change_passing :: proc(t: ^testing.T) {
+    config := default_driver_config(); config.enabled = true
+    config.classes[int(Vehicle_Kind.Motorcycle)] = {0.65, 1, 0.5, 1.5}
+    cautious, ok := make_driver(config, 9, 1, .Motorcycle, .Cautious)
+    assertive, ok2 := make_driver(config, 9, 1, .Motorcycle, .Assertive)
+    testing.expect(t, ok && ok2)
+    testing.expect(t, cautious.aggressiveness >= 0.05 && cautious.aggressiveness <= 0.35)
+    testing.expect(t, assertive.aggressiveness >= 0.6 && assertive.aggressiveness <= 1)
+    testing.expect(t, assertive.patience < cautious.patience)
+    testing.expect(t, passing_advantage(assertive) < passing_advantage(cautious))
+    waiting := cautious
+    waiting.waited = waiting.patience
+    testing.expect(t, passing_advantage(waiting) <= 0.12)
+    testing.expect(t, pass_length(Vehicle{kind = .Motorcycle, driver = assertive}) < LANE_CHANGE_LENGTH)
+    testing.expect(t, pass_length(Vehicle{kind = .Motorcycle, driver = {}}) == LANE_CHANGE_LENGTH)
+    testing.expect(t, gap_horizon(assertive) < gap_horizon(cautious) && gap_horizon(Driver{}) == 1.5)
+}
+
+@(test)
+test_synthetic_successors_vary_with_wander :: proc(t: ^testing.T) {
+    w: World
+    init(&w, []Node{{{0,0}}, {{40,0}}, {{80,0}}, {{40,40}}}, []Road{{0,1,4,8}, {1,2,4,8}, {1,3,4,8}})
+    defer destroy(&w)
+    testing.expect(t, next_road(&w, 0) == 1)
+    primary := Vehicle{road = 0, id = 1, kind = .Motorcycle}
+    testing.expect(t, choose_next_road(&w, primary) == 1)
+    seen_turn, seen_straight := false, false
+    for id in u64(1)..=u64(80) {
+        v := Vehicle{road = 0, id = id, kind = .Motorcycle, driver = {wander = 1}}
+        exit := choose_next_road(&w, v)
+        if exit == 1 { seen_straight = true } else if exit == 2 { seen_turn = true }
+        testing.expect(t, exit == choose_next_road(&w, v))
+        testing.expect(t, w.rng == 1)
+    }
+    testing.expect(t, seen_straight && seen_turn)
+}
+
+@(test)
+test_turn_bias_prefers_inside_receiving_band :: proc(t: ^testing.T) {
+    w: World
+    init(&w, []Node{{{-40,0}}, {{0,0}}, {{0,40}}}, []Road{{0,1,6,8}, {1,2,6,8}})
+    defer destroy(&w)
+    cache_geometry(&w)
+    left := Vehicle{road = 0, preferred_lateral = 0, kind = .Motorcycle, driver = {turn_bias = 1}}
+    right := left
+    right.driver.turn_bias = -1
+    inside := connector_laterals(&w, left, 1)
+    outside := connector_laterals(&w, right, 1)
+    defer delete(inside)
+    defer delete(outside)
+    testing.expect(t, len(inside) > 0 && inside[0] > 0.5)
+    testing.expect(t, len(outside) > 0 && outside[0] < -0.5)
 }
