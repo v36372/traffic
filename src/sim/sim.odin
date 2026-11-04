@@ -263,9 +263,10 @@ step_tick :: proc(w: ^World, dt: f32) {
         v := w.vehicles[i]
         if v.driver.mode == .Following || v.driver.mode == .Seeking || v.driver.mode == .Stopped_Signal || v.driver.mode == .Following_Junction {
             w.vehicles[i].driver.waited += dt
-        } else if v.driver.mode != .Passing && v.driver.mode != .Filtering && v.driver.mode != .Junction {
+        } else if v.driver.mode != .Passing && v.driver.mode != .Filtering && v.driver.mode != .Junction && v.driver.mode != .Avoiding {
             w.vehicles[i].driver.waited = 0
         }
+        try_local_bypass(w, i)
         update_driver_mode(w, i)
         if driver_should_pass(w.vehicles[i]) { try_overtake(w, i) }
         v = w.vehicles[i]
@@ -281,6 +282,7 @@ step_tick :: proc(w: ^World, dt: f32) {
         if v.motion.active {
             _, straight := straight_direction(v.motion)
             if !straight { target = min(target, 4) }
+            if v.motion.bypass { target = min(target, 2) }
             // After yielding in the box, complete a left at a committed pace
             // rather than crawling the rest of the curve at the 4 m/s target.
             if connector_is_left(v.motion) && v.driver.mode == .Junction && v.driver.waited >= 0.25 {
@@ -289,6 +291,20 @@ step_tick :: proc(w: ^World, dt: f32) {
                 target = min(cap, 6.5)
                 if w.behavior.enabled { target *= v.driver.traits.speed_factor }
             }
+        }
+        if v.motion.active && v.motion.steering_count > 0 {
+            for k in int(v.motion.progress/STEERING_STEP)..<v.motion.steering_count {
+                curvature := abs(v.motion.steering[k])
+                if curvature == 0 { continue }
+                // Synthetic 1rad/s manoeuvring yaw limit; brake before, rather
+                // than at, a tighter action. Physical movement checks remain.
+                corner_speed := min(STEERING_SPEED, STEERING_YAW_RATE/curvature)
+                distance := max(0, f32(k)*STEERING_STEP-v.motion.progress)
+                target = min(target, math.sqrt(corner_speed*corner_speed+8*distance))
+            }
+        }
+        if v.motion.active && v.motion.partial {
+            target = min(target, math.sqrt(max(0, 8*(v.motion.length-v.motion.progress))))
         }
         if !v.motion.active {
             // Brake towards a slower exit or a known change of heading before
@@ -321,15 +337,8 @@ step_tick :: proc(w: ^World, dt: f32) {
         if speed < target { speed = min(target, speed+acceleration*dt) } else { speed = max(target, speed-4*dt) }
         speed = max(0, min(speed, v.speed+following_acceleration(w, v, i, headway, acceleration)*dt))
         budget := speed*dt
-        if !v.motion.active {
-            for lead, j in w.vehicles {
-                if i == j || lead.motion.active || lead.road != v.road || lead.distance <= v.distance { continue }
-                if abs(lead.lateral-v.lateral) < (kind_width(lead.kind)+kind_width(v.kind))*0.5+0.18 {
-                    gap := lead.distance-v.distance-(kind_length(lead.kind)+kind_length(v.kind))*0.5-0.05
-                    budget = min(budget, max(0, gap))
-                }
-            }
-        }
+        // Following and execution both use actual world-space body clearance;
+        // a second road/lateral projection would stop clear parallel traffic.
         // Forecast this tick's intended speed, not an invented minimum pace.
         // Movement may still be curtailed by emergency physical checks.
         w.vehicles[i].speed = speed

@@ -47,16 +47,22 @@ junction_polygon :: proc(w: ^World, node: int, extra: f32 = 0) -> [dynamic]Vec2 
     return hull
 }
 
-point_on_junction_pavement :: proc(w: ^World, node: int, point: Vec2, hull: []Vec2) -> bool {
-    if len(hull) >= 3 {
-        inside := true
-        for a, i in hull {
-            if pavement_turn(a, hull[(i+1)%len(hull)], point) < -0.0001 { inside = false; break }
-        }
-        if inside { return true }
+point_in_junction_hull :: proc(point: Vec2, hull: []Vec2, margin: f32 = 0) -> bool {
+    if len(hull) < 3 { return false }
+    for a, i in hull {
+        b := hull[(i+1)%len(hull)]
+        tolerance := f32(0.0001)
+        if margin > 0 { tolerance += margin*vec_distance(a, b) }
+        if pavement_turn(a, b, point) < -tolerance { return false }
     }
+    return true
+}
+
+point_on_junction_pavement :: proc(w: ^World, node: int, point: Vec2, hull: []Vec2, incoming: int = -1, exit: int = -1) -> bool {
+    if point_in_junction_hull(point, hull) { return true }
     for road, i in w.roads {
         if road.from != node && road.to != node { continue }
+        if incoming >= 0 && i != incoming && i != exit { continue }
         length := road_length(w, i)
         if length <= 0 { continue }
         a, b := w.nodes[road.from].position, w.nodes[road.to].position
@@ -74,13 +80,18 @@ connector_on_pavement :: proc(w: ^World, c: Connector, kind: Vehicle_Kind, hull:
     samples := max(1, int(math.ceil(c.length/0.05)))
     for k in 0..=samples {
         p, f := connector_pose(c, c.length*f32(k)/f32(samples))
-        for along in ([]f32{-0.5,0,0.5}) {
-            for across in ([]f32{-0.5,0,0.5}) {
-                if along == 0 && across == 0 { continue }
-                x, y := along*kind_length(kind), across*kind_width(kind)
-                point := Vec2{p.x+f.x*x-f.y*y, p.y+f.y*x+f.x*y}
-                if !point_on_junction_pavement(w, c.node, point, hull) { return false }
-            }
+        if !body_on_junction_pavement(w, c.node, p, f, kind, hull) { return false }
+    }
+    return true
+}
+
+body_on_junction_pavement :: proc(w: ^World, node: int, p, f: Vec2, kind: Vehicle_Kind, hull: []Vec2, incoming: int = -1, exit: int = -1) -> bool {
+    for along in ([]f32{-0.5,0,0.5}) {
+        for across in ([]f32{-0.5,0,0.5}) {
+            if along == 0 && across == 0 { continue }
+            x, y := along*kind_length(kind), across*kind_width(kind)
+            point := Vec2{p.x+f.x*x-f.y*y, p.y+f.y*x+f.x*y}
+            if !point_on_junction_pavement(w, node, point, hull, incoming, exit) { return false }
         }
     }
     return true

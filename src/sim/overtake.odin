@@ -57,21 +57,21 @@ lane_rear_safe :: proc(w: ^World, i: int, v: Vehicle, predictive: bool) -> bool 
 
 try_overtake :: proc(w: ^World, i: int) {
     v := w.vehicles[i]
-    // Preserve the sampled all-default baseline; explicit non-balanced
-    // personas may still pass when attached to a behavior-enabled world.
-    if !w.behavior.enabled || (!behavior_varied(w.behavior) && v.driver.persona == .Balanced) || v.motion.active || v.lane.active { return }
+    // Safe passing is an ordinary maneuver, independent of trait variation.
+    if v.motion.active || v.lane.active { return }
     radius := 0.5*math.sqrt(kind_length(v.kind)*kind_length(v.kind)+kind_width(v.kind)*kind_width(v.kind))
     length := pass_length(v)
     if v.distance-radius <= junction_setback(w, v.road, true, true)+1+CROSSING_DEPTH { return }
     if v.distance+length+radius >= entry_distance(w, v.road, v.kind) { return }
     // Do not start a second maneuver behind one still changing bands.
     for other in w.vehicles { if other.lane.active && other.road == v.road && other.distance >= v.distance && other.distance-v.distance < 35 { return } }
-    target := min(w.roads[v.road].speed_limit, kind_speed(v.kind))*v.driver.traits.speed_factor
+    target := min(w.roads[v.road].speed_limit, kind_speed(v.kind))
+    if w.behavior.enabled { target *= v.driver.traits.speed_factor }
     lead_index := -1
     gap := f32(35)
     for lead, j in w.vehicles {
         if i == j || lead.road != v.road || lead.motion.active || lead.distance <= v.distance { continue }
-        if abs(lead.lateral-v.lateral) >= (kind_width(lead.kind)+kind_width(v.kind))*0.5+0.18 { continue }
+        if abs(lead.lateral-v.lateral) >= (kind_width(lead.kind)+kind_width(v.kind))*0.5+0.025 { continue }
         d := lead.distance-v.distance
         if d < gap { lead_index, gap = j, d }
     }

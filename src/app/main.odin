@@ -5,6 +5,7 @@ import "core:math"
 import "core:os"
 import "core:strings"
 
+import replay "../replay"
 import sim "../sim"
 import mapdata "../mapdata"
 import rl "vendor:raylib"
@@ -38,7 +39,7 @@ run_frontend :: proc() -> int {
     // Parse before initializing raylib: --help works without a display.
     for arg in os.args[1:] {
         if arg == "--help" || arg == "-h" {
-            fmt.println("HCMC Traffic | Phase A technical prototype\nUsage: traffic-game [--map path] [--smoke-test] [--screenshot path.png]\n                   [--demand-scale multiplier] [--warmup seconds] [--capture-sequence DIR]\n\nDefault: signalized four-way (build/maps/intersection.csv; required).\nIt starts at 30s looking at the crossing; Home shows the full map.\nLantern Quarter: --map build/maps/showcase.csv (60s warmup, west-crossing camera).\n--map loads geometry and optional stem-objects.csv signals/demand.\nWithout spawn definitions, demand is random synthetic (not calibrated).\n--demand-scale >0..20 divides configured source intervals; result must stay 0.05..86400s.\nThis is synthetic demand, not measured busy/off-peak counts; requires sources unless scale=1.\n--warmup 0..3600s, rounded to 50ms ticks; default intersection 30s, showcase 60s, smoke 20s, otherwise 0s.\n--smoke-test renders 90 fixed-clock frames, then exits; no live controls.\n--screenshot captures frame 90 (creates no parent directories).\n--capture-sequence DIR implies smoke: 600 frames / 10s at 60fps, PNG every 6 frames (10Hz).\nDIR must already exist and be writable; captures frame-0006.png through frame-0600.png.\nUse the same map and warmup for synthetic demand comparisons; camera is unchanged.\n\nWASD/arrows or right drag: pan | Middle drag: orbit | Wheel: zoom\nN: north | Home: full-map overview | Space: pause | +/-: speed (0.25x..8x)\nR: restart current configuration | M: load map (--map path or build/maps/intersection.csv)\nB: synthetic demo (clears objects) | Esc: quit\n\nMap attribution: (c) OpenStreetMap contributors, ODbL\nhttps://www.openstreetmap.org/copyright")
+            fmt.println("HCMC Traffic | Phase A technical prototype\nUsage: traffic-game [--map path] [--smoke-test] [--screenshot path.png] [--editor]\n                   [--demand-scale multiplier] [--warmup seconds] [--capture-sequence DIR]\n\nDefault: signalized four-way (build/maps/intersection.csv; required).\nIt starts at 30s looking at the crossing; Home shows the full map.\nLantern Quarter: --map build/maps/showcase.csv (60s warmup, west-crossing camera).\n--map loads geometry and optional stem-objects.csv signals/demand.\nWithout spawn definitions, demand is random synthetic (not calibrated).\n--demand-scale >0..20 divides configured source intervals; result must stay 0.05..86400s.\nThis is synthetic demand, not measured busy/off-peak counts; requires sources unless scale=1.\n--warmup 0..3600s, rounded to 50ms ticks; default intersection 30s, showcase 60s, smoke 20s, otherwise 0s.\n--smoke-test renders 90 fixed-clock frames, then exits; no live controls.\n--screenshot captures frame 90 (creates no parent directories).\n--capture-sequence DIR implies smoke: 600 frames / 10s at 60fps, PNG every 6 frames (10Hz).\nDIR must already exist and be writable; captures frame-0006.png through frame-0600.png.\n--editor opens the paused simulation editor; F3 toggles it during live play.\nUse the same map and warmup for synthetic demand comparisons; camera is unchanged.\n\nWASD/arrows or right drag: pan | Middle drag: orbit | Wheel: zoom\nN: north | Home: full-map overview | Space: pause | +/-: speed (0.25x..8x)\nR: restart current configuration | M: load map (--map path or build/maps/intersection.csv)\nB: synthetic demo (clears objects) | Esc: quit\n\nMap attribution: (c) OpenStreetMap contributors, ODbL\nhttps://www.openstreetmap.org/copyright")
             fmt.println("\nMeasurements: HUD shows FPS / frame ms.\n--benchmark 1..300: real-clock timed run after 2s render warmup; controls disabled, Esc aborts.\nReports frame-time percentiles and simulation/draw/present timings; no screenshots.\n--uncapped: live play or benchmark without the 60 FPS limiter; not for smoke/capture.\nDesktop/GPU synchronization may still limit FPS; simulation speed is unchanged.")
             return 0
         }
@@ -67,7 +68,9 @@ run_frontend :: proc() -> int {
     approaches := signal_approaches(&world, offsets)
     defer delete(approaches)
     view := scene_entry_view(&world, &buildings, profile)
-    paused := false
+    paused := options.editor
+    editor_mode := options.editor
+    editor := editor_init()
     speed: f64 = 1
     accumulator: f64
     warmup_scene(&world, profile, smoke, options.warmup)
@@ -94,6 +97,19 @@ run_frontend :: proc() -> int {
         dt := math.min(rl.GetFrameTime(), 0.25)
         // Smoke runs ignore live desktop controls so their seeded state is reproducible.
         if !smoke && options.benchmark == 0 {
+            if rl.IsKeyPressed(.F3) { editor_mode = !editor_mode; if editor_mode { paused = true; editor.seeking = false } }
+            if editor_mode {
+                if rl.IsKeyPressed(.SPACE) { paused = !paused }
+                if rl.IsKeyPressed(.TAB) { editor_select_next(&editor, &world) }
+                if rl.IsKeyPressed(.TAB) { editor_select_next(&editor, &world) }
+                if rl.IsKeyPressed(.HOME) { view = fit_scene_view(&world, &buildings, f32(rl.GetScreenWidth())/f32(rl.GetScreenHeight())) }
+                if rl.IsKeyPressed(.N) { view.yaw = 0 }
+                if rl.IsKeyPressed(.R) { if reset_world(&world) { accumulator = 0; clear(&previous_poses); editor.seeking = false; editor.selected = 0 } }
+                if rl.IsMouseButtonPressed(.LEFT) && rl.GetMouseX() < rl.GetScreenWidth()-EDITOR_WIDTH {
+                    _ = editor_select_nearest(&editor, &world, view_camera(view), rl.GetMousePosition(), rl.GetScreenWidth()-EDITOR_WIDTH)
+                }
+                if rl.GetMouseX() < rl.GetScreenWidth()-EDITOR_WIDTH { update_view(&view, dt) }
+            } else {
             if rl.IsKeyPressed(.SPACE) { paused = !paused } // Preserve the displayed interpolation phase while paused.
             if rl.IsKeyPressed(.EQUAL) || rl.IsKeyPressed(.KP_ADD) { speed = math.min(speed*2, 8) }
             if rl.IsKeyPressed(.MINUS) || rl.IsKeyPressed(.KP_SUBTRACT) { speed = math.max(speed*0.5, 0.25) }
@@ -122,11 +138,15 @@ run_frontend :: proc() -> int {
             if rl.IsKeyPressed(.HOME) { view = fit_scene_view(&world, &buildings, f32(rl.GetScreenWidth())/f32(rl.GetScreenHeight())) }
             if rl.IsKeyPressed(.N) { view.yaw = 0 }
             update_view(&view, dt)
+            }
         }
         sim_start := rl.GetTime()
         ticks := 0
         if smoke {
             advance_capture_frame(&world, frames+1, &previous_poses)
+        } else if editor_mode && editor.seeking {
+            editor_seek_frame(&editor, &world, &previous_poses)
+            ticks = EDITOR_BATCH_TICKS
         } else if !paused {
             accumulator += f64(dt)*speed
             for accumulator >= TICK {
@@ -139,6 +159,8 @@ run_frontend :: proc() -> int {
         // Standard fixed-step interpolation renders one tick behind simulation.
         // Capture uses the same phase on its deterministic 60Hz integer clock.
         alpha := f32((frames+1)%3)/3 if smoke else f32(accumulator/TICK)
+        if editor_mode && paused { alpha = 1 }
+        if editor_mode { editor_refresh_probe(&editor, &world) }
         draw_start := rl.GetTime()
         camera := view_camera(view)
         near, far := camera_clip_planes(view)
@@ -153,8 +175,66 @@ run_frontend :: proc() -> int {
         draw_road_scene(&roads)
         draw_signals(&world, approaches[:])
         for vehicle in world.vehicles { draw_vehicle(&world, vehicle, previous_poses, alpha) }
+        if editor_mode { editor_draw_overlay(&world, editor, camera) }
         rl.EndMode3D()
         draw_hud(&world, map_mode, map_error, paused, speed, view, buildings.count, profile, options.demand_scale)
+        if editor_mode {
+            action := editor_panel(&editor, &world, &previous_poses, &accumulator, &paused, camera)
+            switch action {
+            case .None:
+            case .Save:
+                if editor.selected == 0 {
+                    fmt.printf("EDITOR SAVE path=build/debug-case.cbor time=%.2f selected=0 ok=false\n", world.time)
+                    editor_set_result(&editor, "Select a driver before saving")
+                }
+                else {
+                    ok := replay.save(&world, "build/debug-case.cbor", editor.selected)
+                    fmt.printf("EDITOR SAVE path=build/debug-case.cbor time=%.2f selected=%d ok=%v\n", world.time, editor.selected, ok)
+                    editor_set_result(&editor, "Saved build/debug-case.cbor" if ok else "Save failed")
+                }
+            case .Load:
+                old_nodes := make([]sim.Node, len(world.nodes))
+                old_roads := make([]sim.Road, len(world.roads))
+                copy(old_nodes, world.nodes[:]); copy(old_roads, world.roads[:])
+                selected, ok := replay.load(&world, "build/debug-case.cbor")
+                geometry_changed := len(old_nodes) != len(world.nodes) || len(old_roads) != len(world.roads)
+                if !geometry_changed {
+                    for node, i in old_nodes { if node != world.nodes[i] { geometry_changed = true; break } }
+                    for road, i in old_roads { if road != world.roads[i] { geometry_changed = true; break } }
+                }
+                delete(old_nodes); delete(old_roads)
+                if ok {
+                    editor.selected = selected
+                    editor.probe_cached = false
+                    editor.seeking = false
+                    paused = true
+                    clear(&previous_poses)
+                    accumulator = 0
+                    if geometry_changed {
+                        map_mode = false
+                        map_error = false
+                        destroy_building_scene(&buildings)
+                        view = scene_entry_view(&world, &buildings, .Fitted, f32(rl.GetScreenWidth())/f32(rl.GetScreenHeight()))
+                    }
+                    delete(offsets); offsets = road_offsets(&world)
+                    destroy_road_scene(&roads); roads = build_road_scene(&world, offsets)
+                    delete(approaches); approaches = signal_approaches(&world, offsets)
+                }
+                fmt.printf("EDITOR LOAD path=build/debug-case.cbor time=%.2f selected=%d ok=%v\n", world.time, selected, ok)
+                editor_set_result(&editor, "Loaded build/debug-case.cbor" if ok else "Load failed")
+            case .Check:
+                if editor.selected == 0 {
+                    fmt.printf("EDITOR CHECK path=build/debug-case.cbor time=%.2f selected=0 result=FAIL progress=0.00 overlaps=0 offroad=0\n", world.time)
+                    editor_set_result(&editor, "Select a driver before checking")
+                }
+                else {
+                    report := replay.check(&world, editor.selected)
+                    state := "FAIL"; if report.passed { state = "PASS" }
+                    fmt.printf("EDITOR CHECK path=build/debug-case.cbor time=%.2f selected=%d result=%s progress=%.2f overlaps=%d offroad=%d\n", world.time, editor.selected, state, report.progress, report.overlaps, report.off_pavement)
+                    editor_set_check_result(&editor, report.passed, report.progress, report.overlaps, report.off_pavement)
+                }
+            case: }
+        }
         present_start := rl.GetTime()
         rl.EndDrawing()
         frame_end := rl.GetTime()

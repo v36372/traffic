@@ -6,6 +6,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import mapdata "../mapdata"
+import replay "../replay"
 import sim "../sim"
 import rl "vendor:raylib"
 import gl "vendor:raylib/rlgl"
@@ -56,15 +57,8 @@ load_map :: proc(world: ^sim.World, path: string, demand_scale: f32 = 1) -> bool
     return true
 }
 
-// Frontend worlds always start with seed 1. Build the replacement while the
-// original's owned geometry/configuration is still alive; configure copies both.
 reset_world :: proc(world: ^sim.World) -> bool {
-    candidate: sim.World
-    sim.init(&candidate, world.nodes[:], world.roads[:])
-    defer sim.destroy(&candidate)
-    if !sim.configure(&candidate, world.signals[:], world.spawns[:]) || !sim.configure_drivers(&candidate, world.behavior) { return false }
-    world^, candidate = candidate, world^
-    return true
+    return replay.restart(world)
 }
 
 Signal_Approach :: struct {

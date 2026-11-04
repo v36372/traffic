@@ -41,6 +41,31 @@ test_overtaking_and_replay :: proc(t: ^testing.T) {
 }
 
 @(test)
+test_default_drivers_try_safe_passes :: proc(t: ^testing.T) {
+    for enabled in ([2]bool{false, true}) {
+        w: World
+        init(&w, []Node{{{0, 0}}, {{300, 0}}}, []Road{{0, 1, 8, 9}}, 21)
+        w.spawn_accumulator = -1000
+        config := default_driver_config()
+        config.enabled = enabled
+        testing.expect(t, configure_drivers(&w, config))
+        leader_driver, _ := make_driver(config, 21, 1, .Bicycle, .Balanced)
+        follower_driver, _ := make_driver(config, 21, 2, .Motorcycle, .Balanced)
+        append(&w.vehicles,
+            Vehicle{road = 0, distance = 40, speed = 2, kind = .Bicycle, id = 1, driver = leader_driver},
+            Vehicle{road = 0, distance = 30, speed = 5, kind = .Motorcycle, id = 2, driver = follower_driver})
+        step(&w, 0.05)
+        testing.expect(t, w.vehicles[1].lane.active, "a clear adjacent band should let a baseline driver pass a slower leader")
+        for _ in 0..<300 {
+            step(&w, 0.05)
+            for v, i in w.vehicles { for other in w.vehicles[i+1:] { testing.expect(t, !bodies_overlap(&w, v, other)) } }
+        }
+        testing.expect(t, w.vehicles[1].distance > w.vehicles[0].distance)
+        destroy(&w)
+    }
+}
+
+@(test)
 test_overtaking_blocked :: proc(t: ^testing.T) {
     w: World
     passing_world(&w, true)
@@ -271,11 +296,4 @@ test_impatient_motorcycle_takes_small_gap_after_waiting :: proc(t: ^testing.T) {
     try_overtake(&w, 1)
     testing.expect(t, w.vehicles[1].lane.active && w.vehicles[1].lane.length == 6)
     testing.expect(t, w.vehicles[1].driver.mode == .Filtering)
-}
-
-@(test)
-test_assertive_motorcycle_may_cut_occupied_band :: proc(t: ^testing.T) {
-    testing.expect(t, motorcycle_may_cut(Vehicle{kind = .Motorcycle, driver = {aggressiveness = 0.9}}))
-    testing.expect(t, !motorcycle_may_cut(Vehicle{kind = .Motorcycle, driver = {aggressiveness = 0.2}}))
-    testing.expect(t, !motorcycle_may_cut(Vehicle{kind = .Car, driver = {aggressiveness = 0.9}}))
 }

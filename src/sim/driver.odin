@@ -1,10 +1,11 @@
 package sim
+import "core:math"
 
 // Synthetic uniform distributions; speed factors never exceed the compliant
 // baseline speed. Headway changes preference, not physical body clearance.
 Driver_Range :: struct { speed_min, speed_max, headway_min, headway_max: f32 }
 Driver_Persona :: enum { Balanced, Cautious, Assertive }
-Driver_Mode :: enum { Cruising, Following, Stopped_Signal, Passing, Junction, Following_Junction, Seeking, Filtering }
+Driver_Mode :: enum { Cruising, Following, Stopped_Signal, Passing, Junction, Following_Junction, Seeking, Filtering, Avoiding }
 Driver :: struct {
     traits: Driver_Traits,
     persona: Driver_Persona,
@@ -12,6 +13,8 @@ Driver :: struct {
     mode: Driver_Mode,
     side: f32,
     aggressiveness, patience, turn_bias, wander, waited: f32,
+    replan_after: f64,
+    motion_blocked: bool,
 }
 Driver_Config :: struct {
     enabled: bool,
@@ -116,39 +119,63 @@ driver_should_pass :: proc(v: Vehicle) -> bool {
     return v.kind == .Motorcycle && v.driver.aggressiveness > 0 && v.driver.mode == .Stopped_Signal
 }
 
-motorcycle_may_cut :: proc(v: Vehicle) -> bool {
-    return v.kind == .Motorcycle && v.driver.aggressiveness >= 0.55
-}
-
 // Synthetic damped gap/closing-speed control, shared by links and connectors.
 // Personal acceleration is a ceiling, not a command to accelerate into a queue.
-// A local tangent projection sees aligned bodies, not a claim on future paths;
-// sharp turns/crossing traffic still use local gaps and actual body clearance.
-// Project onto fitted path arcs before extending this to tighter-turn following.
-following_acceleration :: proc(w: ^World, v: Vehicle, ignore: int, headway, preferred: f32) -> f32 {
-    p, f := vehicle_pose(w, v)
+// Measure contact along the actual guide, not overlapping tangent projections:
+// an angled neighbor can have a nearby projected bumper without blocking us.
+Following_Observation :: struct {
+    found: bool,
+    leader: u64,
+    gap, lead_speed, desired_gap, adjustment: f32,
+}
+
+following_acceleration :: proc(w: ^World, v: Vehicle, ignore: int, headway, preferred: f32, observation: ^Following_Observation = nil) -> f32 {
+    p, _ := vehicle_pose(w, v)
+    response := max(0.4, headway)
+    // Scan the acceleration-relevant distance, capped by the existing 35m
+    // lookahead. Index path/body candidates before raising that ceiling or
+    // the 120-agent limit (O(n^2 * path samples)).
+    lookahead := min(35, 0.5+3*v.speed*response+max(0, preferred)*response*response)
+    count := int(math.ceil(lookahead/0.1))
+    poses: [352][2]Vec2 // <=35m in 0.1m samples, including the current pose.
+    for k in 0..=count {
+        future := forecast_vehicle(w, v, min(lookahead, f32(k)*0.1))
+        poses[k][0], poses[k][1] = vehicle_pose(w, future)
+    }
     gap, lead_speed := f32(35), f32(0)
     found := false
+    leader: u64
     for other, j in w.vehicles {
         if j == ignore { continue }
         q, g := vehicle_pose(w, other)
-        alignment := f.x*g.x+f.y*g.y
-        if alignment < 0.8 { continue }
         dx, dy := q.x-p.x, q.y-p.y
-        along := dx*f.x+dy*f.y
-        if along <= 0 { continue }
-        skew := abs(f.x*g.y-f.y*g.x)
-        half_width := (kind_width(v.kind)+alignment*kind_width(other.kind)+skew*kind_length(other.kind))*0.5
-        if abs(dx*f.y-dy*f.x) >= half_width+0.025 { continue }
-        clearance := along-(kind_length(v.kind)+alignment*kind_length(other.kind)+skew*kind_width(other.kind))*0.5
-        if clearance >= gap { continue }
-        gap, lead_speed, found = clearance, other.speed*alignment, true
+        reach := lookahead+(kind_length(v.kind)+kind_width(v.kind)+kind_length(other.kind)+kind_width(other.kind))*0.5+0.025
+        if dx*dx+dy*dy > reach*reach { continue }
+        for k in 0..=count {
+            distance := min(lookahead, f32(k)*0.1)
+            if distance >= gap+0.1 { break }
+            point, forward := poses[k][0], poses[k][1]
+            alignment := forward.x*g.x+forward.y*g.y
+            if alignment < 0.8 || !body_poses_overlap(point, forward, v.kind, q, g, other.kind) { continue }
+            low, high := max(0, distance-0.1), distance
+            for _ in 0..<4 {
+                middle := (low+high)*0.5
+                trial := forecast_vehicle(w, v, middle)
+                mp, mf := vehicle_pose(w, trial)
+                if body_poses_overlap(mp, mf, v.kind, q, g, other.kind) { high = middle } else { low = middle }
+            }
+            if low < gap { gap, lead_speed, found, leader = low, other.speed*alignment, true, other.id }
+            break
+        }
     }
-    if !found { return preferred }
+    if !found {
+        if observation != nil { observation^ = {adjustment = preferred} }
+        return preferred
+    }
     // 0.5m standstill space and >=0.4s response are synthetic preferences.
-    response := max(0.4, headway)
     desired_gap := 0.5+v.speed*response
     adjustment := 2*(lead_speed-v.speed)/response+(gap-desired_gap)/(response*response)
+    if observation != nil { observation^ = {found, leader, gap, lead_speed, desired_gap, clamp(adjustment, -4, preferred)} }
     return clamp(adjustment, -4, preferred)
 }
 
@@ -158,6 +185,7 @@ update_driver_mode :: proc(w: ^World, i: int) {
     mode := Driver_Mode.Cruising
     if v.motion.active {
         mode = .Junction
+        if v.motion.bypass { mode = .Avoiding }
         if !local_gap_clear(w, v, i, v.speed, gap_horizon(v.driver)) { mode = .Following_Junction }
     } else if v.lane.active {
         mode = .Passing
@@ -165,7 +193,7 @@ update_driver_mode :: proc(w: ^World, i: int) {
     } else if (signal_state(w, v.road) == .Red || signal_state(w, v.road) == .Amber) && v.speed < 0.1 && v.distance >= entry_distance(w, v.road, v.kind)-0.2 { mode = .Stopped_Signal
     } else {
         for lead, j in w.vehicles {
-            if i != j && lead.road == v.road && !lead.motion.active && lead.distance > v.distance && lead.distance-v.distance < 35 && abs(lead.lateral-v.lateral) < (kind_width(lead.kind)+kind_width(v.kind))*0.5+0.18 {
+            if i != j && lead.road == v.road && !lead.motion.active && lead.distance > v.distance && lead.distance-v.distance < 35 && abs(lead.lateral-v.lateral) < (kind_width(lead.kind)+kind_width(v.kind))*0.5+0.025 {
                 mode = .Following
                 if v.driver.patience > 0 && v.driver.waited >= v.driver.patience { mode = .Seeking }
                 break

@@ -93,3 +93,26 @@ test_offset_motorcycle_uturn_tries_other_bands :: proc(t: ^testing.T) {
     testing.expect(t, heading_reverses(w.vehicles[0].motion.forward, w.vehicles[0].motion.outgoing))
     testing.expect(t, len(w.motion_issues) == 0)
 }
+
+@(test)
+test_curbside_uturn_clears_crossing_before_steering :: proc(t: ^testing.T) {
+    w: World
+    init(&w, []Node{{{-60,0}}, {{0,0}}, {{60,0}}, {{0,60}}, {{0,-60}}}, []Road{
+        {0,1,4,8}, {1,0,4,8}, {2,1,4,8}, {1,2,4,8},
+        {1,3,4,8}, {3,1,4,8}, {1,4,4,8}, {4,1,4,8},
+    })
+    defer destroy(&w)
+    testing.expect(t, configure(&w, []Signal_Plan{{1,100,1,1,0,false}}, nil))
+    v := Vehicle{road = 0, distance = entry_distance(&w, 0, .Motorcycle),
+        lateral = -(4-kind_width(.Motorcycle))*0.5, kind = .Motorcycle}
+    c, problem := make_connector(&w, v, 1, 1.395)
+    testing.expect(t, problem == .None, "a rider at the curb needs a straight lead, not a turn that swings its rear off asphalt")
+    testing.expect(t, c.lead >= turn_start_distance(&w, 0)-v.distance)
+    // An already-cleared approach needs no extra lead, even when controlled.
+    v.distance += c.lead
+    late, late_problem := make_connector(&w, v, 1, 1.395)
+    testing.expect(t, late_problem == .None && late.lead == 0)
+    hull := junction_polygon(&w, 1)
+    defer delete(hull)
+    testing.expect(t, connector_on_pavement(&w, c, v.kind, hull[:]))
+}

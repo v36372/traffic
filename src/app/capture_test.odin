@@ -11,6 +11,8 @@ test_cli_capture_validation :: proc(t: ^testing.T) {
     defaults, ok := parse_options(nil)
     testing.expect(t, ok && defaults.demand_scale == 1 && defaults.warmup == -1 && !defaults.smoke)
     testing.expect(t, defaults.map_path == DEFAULT_MAP_PATH && defaults.sequence_dir == "")
+    editor_option, editor_ok := parse_options([]string{"--editor"})
+    testing.expect(t, editor_ok && editor_option.editor)
     for flag in ([]string{"--map", "--screenshot", "--capture-sequence", "--demand-scale", "--warmup"}) {
         _, missing := parse_options([]string{flag})
         _, empty := parse_options([]string{flag, ""})

@@ -314,3 +314,22 @@ test_turn_bias_prefers_inside_receiving_band :: proc(t: ^testing.T) {
     testing.expect(t, len(inside) > 0 && inside[0] > 0.5)
     testing.expect(t, len(outside) > 0 && outside[0] < -0.5)
 }
+
+@(test)
+test_clear_parallel_course_does_not_stop_for_adjacent_body :: proc(t: ^testing.T) {
+    w: World
+    init(&w, []Node{{{0,0}}, {{300,0}}}, []Road{{0,1,8,9}})
+    defer destroy(&w)
+    w.spawn_accumulator = -1000
+    config := default_driver_config()
+    config.enabled = true
+    testing.expect(t, configure_drivers(&w, config))
+    driver, _ := make_driver(config, 1, 2, .Car, .Balanced)
+    append(&w.vehicles,
+        Vehicle{road = 0, distance = 41, kind = .Car, id = 1},
+        Vehicle{road = 0, distance = 40, lateral = 2, speed = 2, kind = .Car, id = 2, driver = driver})
+    step(&w, 0.05)
+    testing.expect(t, w.vehicles[1].distance > 40 && !w.vehicles[1].lane.active,
+        "a clear parallel body corridor needs neither braking nor a new lateral maneuver")
+    testing.expect(t, !bodies_overlap(&w, w.vehicles[0], w.vehicles[1]))
+}

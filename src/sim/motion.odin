@@ -13,6 +13,17 @@ Connector :: struct {
     lead, tail: f32,
     outgoing: Vec2,
     controls: [4]Vec2,
+    // A local bypass is two tangent-matched cubics; continuation starts at
+    // controls[3]. Ordinary fitted connectors remain a single cubic.
+    bypass: bool,
+    continuation: [3]Vec2,
+    // Adaptive guides are short forward steering actions, not a return to the
+    // old cubic. Cached action-boundary poses keep forecasts O(1).
+    steering_count: int,
+    steering: [32]f32,
+    steering_poses: [33][2]Vec2,
+    partial: bool,
+    local: bool, // Adaptive same-link maneuver; never advances the route edge.
     arc: [65]f32,
 }
 Motion_Problem :: enum { None, Degenerate, Short_Approach, Short_Exit, U_Turn, Tight_Turn, Terminal_Clearance }
@@ -32,8 +43,16 @@ report_motion_issue :: proc(w: ^World, v: Vehicle, exit: int, problem: Motion_Pr
 
 vec_distance :: proc(a, b: Vec2) -> f32 { return math.sqrt((a.x-b.x)*(a.x-b.x)+(a.y-b.y)*(a.y-b.y)) }
 bezier_pose :: proc(c: Connector, t: f32) -> (p, f: Vec2) {
+    if c.bypass {
+        if t > 0.5 { return cubic_pose({c.controls[3], c.continuation[0], c.continuation[1], c.continuation[2]}, 2*t-1) }
+        return cubic_pose(c.controls, 2*t)
+    }
+    return cubic_pose(c.controls, t)
+}
+
+cubic_pose :: proc(controls: [4]Vec2, t: f32) -> (p, f: Vec2) {
     s := 1-t
-    a, b, d, e := c.controls[0], c.controls[1], c.controls[2], c.controls[3]
+    a, b, d, e := controls[0], controls[1], controls[2], controls[3]
     p = {s*s*s*a.x+3*s*s*t*b.x+3*s*t*t*d.x+t*t*t*e.x,
          s*s*s*a.y+3*s*s*t*b.y+3*s*t*t*d.y+t*t*t*e.y}
     f = {3*s*s*(b.x-a.x)+6*s*t*(d.x-b.x)+3*t*t*(e.x-d.x),
@@ -42,13 +61,31 @@ bezier_pose :: proc(c: Connector, t: f32) -> (p, f: Vec2) {
     if n > 0 { f.x /= n; f.y /= n }
     return
 }
+STEERING_STEP :: f32(0.25)
+STEERING_SPEED :: f32(2)
+STEERING_YAW_RATE :: f32(1)
+
+curvature_pose :: proc(p, f: Vec2, curvature, distance: f32) -> (position, forward: Vec2) {
+    if curvature == 0 { return Vec2{p.x+f.x*distance, p.y+f.y*distance}, f }
+    s, c := math.sin(curvature*distance), math.cos(curvature*distance)
+    return Vec2{p.x+(f.x*s+f.y*(c-1))/curvature, p.y+(f.y*s-f.x*(c-1))/curvature},
+        Vec2{f.x*c-f.y*s, f.y*c+f.x*s}
+}
+
 connector_pose :: proc(c: Connector, distance: f32) -> (p, f: Vec2) {
     d := clamp(distance, 0, c.length)
+    if c.steering_count > 0 {
+        if d >= c.length { return c.steering_poses[c.steering_count][0], c.steering_poses[c.steering_count][1] }
+        index := min(int(d/STEERING_STEP), c.steering_count-1)
+        pose := c.steering_poses[index]
+        return curvature_pose(pose[0], pose[1], c.steering[index], d-f32(index)*STEERING_STEP)
+    }
     if d <= c.lead { return Vec2{c.start.x+c.forward.x*d, c.start.y+c.forward.y*d}, c.forward }
     d -= c.lead
     if d >= c.arc[64] {
         tail := d-c.arc[64]
         q := c.controls[3]
+        if c.bypass { q = c.continuation[2] }
         return Vec2{q.x+c.outgoing.x*tail, q.y+c.outgoing.y*tail}, c.outgoing
     }
     for i in 1..<len(c.arc) {
@@ -125,22 +162,29 @@ fit_uturn_connector :: proc(w: ^World, v: Vehicle, exit: int, lateral: f32) -> (
     q, g := vehicle_pose(w, Vehicle{road = exit, distance = end, lateral = lateral, kind = v.kind})
     hull := junction_polygon(w, w.roads[v.road].to)
     defer delete(hull)
-    for handle in ([]f32{4, 5, 6, 3.2, 7, 8, 2.6}) {
-        first := Vec2{start.x+forward.x*handle, start.y+forward.y*handle}
-        second := Vec2{q.x-g.x*handle, q.y-g.y*handle}
-        candidate := Connector{
-            active = true, node = w.roads[v.road].to, exit = exit, end = end, lateral = lateral,
-            start = start, forward = forward, outgoing = g, controls = {start, first, second, q},
+    // A curbside rear needs to enter the wider junction before rotating. On a
+    // controlled approach this also preserves the protected straight crossing.
+    mouth_lead := max(0, turn_start_distance(w, v.road)+kind_length(v.kind)*0.5-a.distance)
+    for lead in ([2]f32{0, mouth_lead}) {
+        if lead == 0 && mouth_lead > 0 && signal_state(w, v.road) != .Uncontrolled { continue }
+        p := Vec2{start.x+forward.x*lead, start.y+forward.y*lead}
+        for handle in ([]f32{4, 5, 6, 3.2, 7, 8, 2.6}) {
+            first := Vec2{p.x+forward.x*handle, p.y+forward.y*handle}
+            second := Vec2{q.x-g.x*handle, q.y-g.y*handle}
+            candidate := Connector{
+                active = true, node = w.roads[v.road].to, exit = exit, end = end, lateral = lateral,
+                start = start, forward = forward, lead = lead, outgoing = g, controls = {p, first, second, q},
+            }
+            previous := p
+            for i in 1..<len(candidate.arc) {
+                point, _ := bezier_pose(candidate, f32(i)/64)
+                candidate.arc[i] = candidate.arc[i-1]+vec_distance(previous, point)
+                previous = point
+            }
+            candidate.length = lead+candidate.arc[64]
+            if candidate.length <= 0.5 { continue }
+            if connector_on_pavement(w, candidate, v.kind, hull[:]) { return candidate, .None }
         }
-        previous := start
-        for i in 1..<len(candidate.arc) {
-            point, _ := bezier_pose(candidate, f32(i)/64)
-            candidate.arc[i] = candidate.arc[i-1]+vec_distance(previous, point)
-            previous = point
-        }
-        candidate.length = candidate.arc[64]
-        if candidate.length <= 0.5 { continue }
-        if connector_on_pavement(w, candidate, v.kind, hull[:]) { return candidate, .None }
     }
     return c, .U_Turn
 }
@@ -319,6 +363,7 @@ body_clear :: proc(w: ^World, candidate: Vehicle, ignore: int = -1) -> bool {
 // Exact collinearity selects straight speed targets, not crossing permission.
 // Monotone projections also exclude a reversing control polygon.
 straight_direction :: proc(c: Connector) -> (forward: Vec2, straight: bool) {
+    if c.bypass { return {}, false }
     start := c.start
     end := Vec2{c.controls[3].x+c.outgoing.x*c.tail, c.controls[3].y+c.outgoing.y*c.tail}
     d := Vec2{end.x-start.x, end.y-start.y}
@@ -453,7 +498,7 @@ forecast_vehicle :: proc(w: ^World, v: Vehicle, distance: f32) -> Vehicle {
         amount := min(left, trial.motion.length-trial.motion.progress)
         trial.motion.progress += amount
         left -= amount
-        if trial.motion.progress < trial.motion.length || trial.motion.exit < 0 { return trial }
+        if trial.motion.progress < trial.motion.length || trial.motion.exit < 0 || trial.motion.partial { return trial }
         trial.road, trial.distance, trial.lateral = trial.motion.exit, trial.motion.end, trial.motion.lateral
         trial.motion = {}
     }
@@ -482,7 +527,7 @@ local_gap_clear :: proc(w: ^World, candidate: Vehicle, ignore: int, speed: f32, 
         // Extrapolating them through the departing body would veto escape.
         if other.road == candidate.road && !other.motion.active && !other.lane.active &&
             other.distance < candidate.distance && abs(other.lateral-candidate.lateral) < (kind_width(other.kind)+kind_width(candidate.kind))*0.5+0.18 { continue }
-        if other.motion.active && candidate.motion.sequence != 0 &&
+        if other.motion.active && !candidate.motion.local && !other.motion.local && candidate.motion.sequence != 0 &&
             other.motion.sequence > candidate.motion.sequence { continue }
         // Observe stopped traffic as stopped. Inventing forward creep for
         // a blocked rider can prevent the crossing rider from clearing it.
@@ -527,12 +572,11 @@ acquire_connector :: proc(w: ^World, i, exit: int) -> bool {
         c.sequence = w.entry_sequence+1
         trial := v
         trial.motion = c
-        // Keep the first geometrically usable band. A temporary conflict is
-        // a reason to yield, not to cut across neighboring riders' bands,
-        // unless an aggressive motorcycle is hunting a free receiving slot.
+        // Prefer the nearest receiving band, but if its trajectory is occupied,
+        // try the next fitted band rather than waiting behind a face-to-face
+        // conflict. Each alternative still passes the same body and time-gap checks.
         if !body_clear(w, trial, i) || !local_gap_clear(w, trial, i, v.speed, gap_horizon(v.driver)) {
-            if motorcycle_may_cut(v) { continue }
-            return false
+            continue
         }
         w.entry_sequence += 1
         w.vehicles[i].motion = c
@@ -551,6 +595,10 @@ acquire_connector :: proc(w: ^World, i, exit: int) -> bool {
 // connector boundaries. <= 0.10m spatial checks prevent tunnelling at coarse dt;
 // this sampled body model is not a certification of arbitrary swept geometry.
 move_vehicle :: proc(w: ^World, i: int, budget: f32) -> (travelled: f32, finished: bool) {
+    w.vehicles[i].driver.motion_blocked = false
+    hull: [dynamic]Vec2
+    if w.vehicles[i].motion.steering_count > 0 && !w.vehicles[i].motion.local { hull = junction_polygon(w, w.vehicles[i].motion.node) }
+    defer delete(hull)
     left := budget
     for left > 0.000001 {
         v := w.vehicles[i]
@@ -572,16 +620,16 @@ move_vehicle :: proc(w: ^World, i: int, budget: f32) -> (travelled: f32, finishe
                 if !acquire_connector(w, i, exit) { break }
                 continue
             }
-            if v.lane.active && !lane_rear_safe(w, i, v, false) { break }
+            if v.lane.active && !lane_rear_safe(w, i, v, false) { w.vehicles[i].driver.motion_blocked = true; break }
             amount := min(left, min(0.1, boundary-v.distance))
             trial := v
             trial.distance += amount
             if trial.lane.active {
                 trial.lateral, _ = lane_offset(trial)
-                if !local_gap_clear(w, trial, i, v.speed, gap_horizon(v.driver)) { break }
+                if !local_gap_clear(w, trial, i, v.speed, gap_horizon(v.driver)) { w.vehicles[i].driver.motion_blocked = true; break }
                 if trial.distance >= trial.lane.start+lane_change_length(trial) { trial.lane = {} }
             }
-            if !body_clear(w, trial, i) { break }
+            if !body_clear(w, trial, i) { w.vehicles[i].driver.motion_blocked = true; break }
             w.vehicles[i] = trial
             left -= amount
             travelled += amount
@@ -589,11 +637,23 @@ move_vehicle :: proc(w: ^World, i: int, budget: f32) -> (travelled: f32, finishe
             amount := min(left, min(0.1, v.motion.length-v.motion.progress))
             trial := v
             trial.motion.progress += amount
-            if !body_clear(w, trial, i) || !local_gap_clear(w, trial, i, v.speed, gap_horizon(v.driver)) { break }
+            if trial.motion.steering_count > 0 {
+                p, f := vehicle_pose(w, trial)
+                permitted := -1
+                if trial.motion.local { permitted = trial.road }
+                if !body_on_junction_pavement(w, trial.motion.node, p, f, trial.kind, hull[:], permitted, permitted) { w.vehicles[i].driver.motion_blocked = true; break }
+            }
+            if !body_clear(w, trial, i) || !local_gap_clear(w, trial, i, v.speed, gap_horizon(v.driver)) { w.vehicles[i].driver.motion_blocked = true; break }
             if trial.motion.progress >= trial.motion.length-0.000001 {
+                if trial.motion.partial {
+                    w.vehicles[i] = trial
+                    travelled += amount
+                    break
+                }
                 if trial.motion.exit < 0 { return travelled+amount, true }
                 trial.road, trial.distance, trial.lateral = trial.motion.exit, trial.motion.end, trial.motion.lateral
                 trial.motion = {}
+                if !body_clear(w, trial, i) { w.vehicles[i].driver.motion_blocked = true; break }
             }
             w.vehicles[i] = trial
             left -= amount

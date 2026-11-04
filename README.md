@@ -31,6 +31,10 @@ WASD/arrows or right drag pan; middle drag orbits; wheel zooms. Space pauses, +/
 
 For uncapped gameplay (higher GPU/CPU usage), run `./build/traffic-game --uncapped`. This removes the game's 60 FPS limiter, not desktop/GPU synchronization; traffic simulation speed stays unchanged. The default remains capped at 60 FPS. Smoke/sequence captures retain their fixed 60 FPS clock.
 
+## Simulation debugger (CLI-first)
+
+Run `make -s debug` for a persistent native session. Use `seek 250` and `list stopped` for a fresh run, or `load test-cases/default-250-driver98.cbor` for the preserved failure; then `inspect`, `probe`, `step 1`, `save`, `check`, `quit`. Commands return one JSON object each, including the actual following leader/gap/acceleration, physical clearance and independent movement probe. No display, mouse automation or OCR is involved. `make replay-case CASE=test-cases/default-250-driver98.cbor` runs the preserved behavior assertion. `make editor` remains an optional visual inspector. See [the debugger workflow](docs/SIMULATION_EDITOR.md).
+
 ## Measure frame pacing
 
 The top-right HUD shows FPS and the last frame time. For a repeatable stationary-camera measurement of the normal real-clock loop:

@@ -20,6 +20,7 @@ Frontend_Options :: struct {
     warmup: f64, // -1 selects the existing map/smoke default.
     benchmark: f64, // Wall-clock measurement seconds after 2s of rendering warmup; 0 disables.
     uncapped: bool,
+    editor: bool,
 }
 
 parse_options :: proc(args: []string) -> (options: Frontend_Options, ok: bool) {
@@ -28,6 +29,7 @@ parse_options :: proc(args: []string) -> (options: Frontend_Options, ok: bool) {
         arg := args[i]
         if arg == "--smoke-test" { options.smoke = true; continue }
         if arg == "--uncapped" { options.uncapped = true; continue }
+        if arg == "--editor" { options.editor = true; continue }
         switch arg {
         case "--map", "--screenshot", "--capture-sequence", "--demand-scale", "--warmup", "--benchmark":
             if i+1 >= len(args) || args[i+1] == "" || strings.has_prefix(args[i+1], "--") {
@@ -73,6 +75,10 @@ parse_options :: proc(args: []string) -> (options: Frontend_Options, ok: bool) {
     }
     // Sequence capture is always a fixed-clock smoke run; no second flag needed.
     if options.sequence_dir != "" { options.smoke = true }
+    if options.editor && (options.smoke || options.benchmark > 0 || options.screenshot != "") {
+        fmt.eprintln("--editor cannot be combined with smoke, screenshots, capture sequences, or benchmarks")
+        return options, false
+    }
     if options.benchmark > 0 && (options.smoke || options.screenshot != "") {
         fmt.eprintln("--benchmark cannot be combined with smoke or screenshots (capture I/O distorts timing)")
         return options, false
