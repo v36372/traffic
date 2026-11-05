@@ -27,6 +27,7 @@ stateDiagram-v2
         state Route {
             Cruise
             FollowQueue
+            QueueApproach
             WaitSignal
             WaitEntry
         }
@@ -56,17 +57,17 @@ stateDiagram-v2
 
 Leaves and their parents are explicit in `driver_state_parent`; `driver_state_path` provides the inspector path. The shared **Driving** signal guard suppresses recovery at a mandatory red/amber stop-bar hold. The shared **Recovery** deadline applies to Plan, Execute and RetryWait. A yielding recovery retains its Recovery identity rather than being relabelled as a junction follower. A working, moving guide remains stable after its retry deadline; expiration alone does not replace it. There are no parallel or history regions because this behavior does not need them.
 
-`Continue` means follow the existing route/controller, including guarded junction admission; it is not permission to enter on red. Entry failures produce WaitEntry rather than forcing a new route. Pass includes the existing shorter same-link motorcycle maneuver; its legacy mode projection can say Filtering.
+`Continue` means follow the existing route/controller, including guarded junction admission; it is not permission to enter on red. Entry failures produce WaitEntry rather than forcing a new route. QueueApproach anticipates a road-local passing candidate within the existing 35m range; unlike FollowQueue it does not assert actual guide-based following contact. This preserves passing opportunities beyond the controller's shorter acceleration-relevant lookahead. Pass includes the existing shorter same-link motorcycle maneuver; its legacy mode projection can say Filtering.
 
 ## Progress, recovery and feedback
 
-`Driver.waited` now measures consecutive executed no-progress time, not time spent in a Following mode. Travel greater than 0.000001m resets it; mandatory signal holds reset it too. A slowly moving queue is not automatically stuck. An eligible driver may reconsider after 0.25s without progress, immediately after a real movement veto, or near a partial/blocked guide endpoint. Physical eligibility is still checked by the service.
+`Driver.actor.no_progress` measures consecutive executed no-progress time. Travel greater than 0.000001m resets it; mandatory signal holds reset it too. A slowly moving queue is not automatically stuck. `Driver.waited` separately retains queue patience for the existing passing preferences, including time spent slowly following or waiting at a signal; it does not prove a stall. An eligible driver may reconsider after 0.25s without progress, immediately after a real movement veto or a nearby stationary following obstruction, or near a partial/blocked guide endpoint. Physical eligibility is still checked by the service. A slowly approaching rider can maneuver around a genuinely stopped leader without first having to stop too; a moving leader is not treated as stationary.
 
 The actor allows recovery requests at most twice per simulated second (`replan_after`). The unchanged search uses at most 2,048 expansions, 8,192 states and 32 forward actions of 0.25m. It retains the intended exit, actual initial pose and entry priority. Full aligned receiving-strip containment is required for handoff. Partial paths brake before their endpoint and replan; they do not certify the rest of a route.
 
 Execution feedback distinguishes a signal hold, actual following leader, body contact, predicted conflict, lane-rear veto, pavement veto, unsupported geometry (`Motion_Problem`), protected approach, route boundary, partial endpoint and failed bounded search. Body/prediction/rear queries report the vetoing trip ID where available. Last maneuver feedback remains separate from last movement feedback: a failed plan must not disappear just because the old guide was tried again. `Search_Limit` and `No_Plan` never mean that all physically possible routes were proved impossible.
 
-A committed ordinary left turn remembers an actual yield before using the existing committed-turn speed/acceleration targets. No-progress resets on resumed movement without erasing that commitment. This is synthetic controller behavior, not calibrated driving dynamics.
+Ordinary left turns retain the existing committed-turn speed/acceleration targets after queue patience has accumulated. A continuous 0.25s junction yield also establishes a remembered commitment; interleaved moving samples reset that junction-yield timer, while an already established commitment survives resumed movement. Actual no-progress remains separate from both preferences. These are synthetic controller rules, not calibrated driving dynamics.
 
 ## Safety and acceptance
 

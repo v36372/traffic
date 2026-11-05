@@ -32,7 +32,7 @@ test_snapshot_roundtrip_replays_exact_native_state :: proc(t: ^testing.T) {
     defer delete(path)
     defer os.remove(path)
     if len(w.vehicles) > 1 { w.vehicles[1].driver.actor = {state = .Plan, intent = .Recover, attempts = 9} }
-    w.vehicles[0].driver.actor = {initialized = true, state = .Retry, intent = .Recover, since = 3.25, attempts = 7, junction_wait = 0.4, junction_yielded = true, filtering = true, last = {moved = 0.125, reason = .Body, blocker = 42}, plan = {attempted = true, reason = .Search_Limit, blocker = 43}}
+    w.vehicles[0].driver.actor = {initialized = true, state = .Retry, intent = .Recover, since = 3.25, attempts = 7, no_progress = 0.75, junction_wait = 0.4, junction_yielded = true, filtering = true, last = {moved = 0.125, reason = .Body, blocker = 42}, plan = {attempted = true, reason = .Search_Limit, blocker = 43}}
     w.vehicles[0].driver.waited = 0.75
     w.vehicles[0].driver.replan_after = w.time+0.5
     testing.expect(t, save(&w, path, w.vehicles[0].id, 7, 0.75))
@@ -85,10 +85,10 @@ test_historical_scene_import_preserves_physics_and_counters :: proc(t: ^testing.
     testing.expect(t, w.time == old.time && w.rng == old.rng && w.behavior_seed == old.behavior_seed && w.entry_sequence == old.entry_sequence && w.spawned == old.spawned && w.completed == old.completed && w.requested == old.requested && w.pending == old.pending && w.spawn_accumulator == old.spawn_accumulator)
     for v, i in w.vehicles {
         original := old.vehicles[i]
-        testing.expect(t, v.driver.actor.initialized && v.driver.waited == 0 && v.driver.replan_after == original.driver.replan_after && v.driver.actor.last.reason == .None)
+        testing.expect(t, v.driver.actor.initialized && v.driver.actor.no_progress == 0 && v.driver.waited == original.driver.waited && v.driver.replan_after == original.driver.replan_after && v.driver.actor.last.reason == .None)
         projected := v.driver
         sim.publish_driver_mode(&projected)
-        testing.expect(t, v.driver.mode == projected.mode, "legacy projection must reflect the reset no-progress timer")
+        testing.expect(t, v.driver.mode == projected.mode, "legacy projection must reflect the imported actor state")
         actual := v
         actual.driver = original.driver
         testing.expect(t, actual == original, "historical physical vehicle fields must not change")

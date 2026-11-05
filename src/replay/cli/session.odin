@@ -74,7 +74,7 @@ driver_view :: proc(s: ^Session, v: sim.Vehicle, index: int) -> Driver_View {
     view := Driver_View{id = v.id, kind = v.kind, mode = v.driver.mode, road = v.road, speed = v.speed}
     view.state_path = sim.driver_state_path(v.driver.actor.state)
     view.intent = v.driver.actor.intent
-    view.no_progress_seconds, view.retry_after = v.driver.waited, v.driver.replan_after
+    view.no_progress_seconds, view.retry_after = v.driver.actor.no_progress, v.driver.replan_after
     view.last_execution_feedback, view.last_maneuver_feedback = v.driver.actor.last, v.driver.actor.plan
     view.attempts, view.state_since = v.driver.actor.attempts, v.driver.actor.since
     view.position, view.forward = sim.vehicle_pose(w, v)

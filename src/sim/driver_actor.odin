@@ -3,7 +3,7 @@ package sim
 // One native, value-owned actor per trip. Leaves have explicit shared parents;
 // this is not a general statechart runtime or a thread per vehicle.
 Driver_Region :: enum { Route, Maneuver, Recovery, Done }
-Driver_State :: enum { Cruise, Follow_Queue, Wait_Signal, Wait_Entry, Pass, Traverse, Yield_Junction, Plan, Execute, Retry, Completed }
+Driver_State :: enum { Cruise, Follow_Queue, Queue_Approach, Wait_Signal, Wait_Entry, Pass, Traverse, Yield_Junction, Plan, Execute, Retry, Completed }
 Driver_Intent :: enum { Continue, Pass, Recover }
 Driver_Event_Kind :: enum { Tick, Maneuver_Result, Motion_Result }
 Driver_Actor :: struct {
@@ -13,12 +13,12 @@ Driver_Actor :: struct {
     since: f64,
     last, plan: Driver_Feedback,
     attempts: u64,
-    junction_wait: f32,
+    no_progress, junction_wait: f32,
     junction_yielded, filtering: bool,
 }
 Driver_Observation :: struct {
     motion, lane, bypass, partial, near_end, filtering: bool,
-    signal_hold, at_entry, following, can_recover: bool,
+    signal_hold, at_entry, following, pass_candidate, stopped_leader, can_recover: bool,
     speed: f32,
     leader: u64,
 }
@@ -35,7 +35,7 @@ DRIVER_STALL_SECONDS :: f32(0.25)
 
 driver_state_parent :: proc(state: Driver_State) -> Driver_Region {
     switch state {
-    case .Cruise, .Follow_Queue, .Wait_Signal, .Wait_Entry: return .Route
+    case .Cruise, .Follow_Queue, .Queue_Approach, .Wait_Signal, .Wait_Entry: return .Route
     case .Pass, .Traverse, .Yield_Junction: return .Maneuver
     case .Plan, .Execute, .Retry: return .Recovery
     case .Completed: return .Done
@@ -47,6 +47,7 @@ driver_state_path :: proc(state: Driver_State) -> string {
     switch state {
     case .Cruise: return "Driving.Route.Cruise"
     case .Follow_Queue: return "Driving.Route.FollowQueue"
+    case .Queue_Approach: return "Driving.Route.QueueApproach"
     case .Wait_Signal: return "Driving.Route.WaitSignal"
     case .Wait_Entry: return "Driving.Route.WaitEntry"
     case .Pass: return "Driving.Maneuver.Pass"
@@ -70,8 +71,18 @@ observe_driver :: proc(w: ^World, i: int, following: Following_Observation) -> D
     o := Driver_Observation{motion = c.active, lane = v.lane.active, bypass = c.bypass,
         partial = c.partial, filtering = v.lane.active && v.lane.length > 0 && v.lane.length < LANE_CHANGE_LENGTH,
         speed = v.speed, following = following.found, leader = following.leader,
+        stopped_leader = following.found && following.lead_speed == 0 && following.gap <= max(3, kind_length(v.kind)),
         at_entry = !c.active && v.distance >= stop-0.0001}
     o.signal_hold = !c.active && (state == .Red || state == .Amber) && v.speed < 0.1 && v.distance >= stop-0.2 && v.distance <= stop+0.0001
+    // Passing opportunity discovery retains its existing 35m road-local
+    // range. It is not evidence of physical following contact: the controller's
+    // acceleration-relevant guide lookahead can be much shorter.
+    if !c.active && !v.lane.active {
+        for lead, j in w.vehicles {
+            if i != j && lead.road == v.road && !lead.motion.active && lead.distance > v.distance && lead.distance-v.distance < 35 &&
+                abs(lead.lateral-v.lateral) < (kind_width(lead.kind)+kind_width(v.kind))*0.5+0.025 { o.pass_candidate = true; break }
+        }
+    }
     // A queue far upstream can still use a same-link corridor on red; only
     // the actual mandatory bar hold suppresses recovery pressure.
     if c.active {
@@ -91,10 +102,10 @@ initialize_driver_actor :: proc(d: ^Driver, o: Driver_Observation, time: f64) {
     if o.motion {
         d.actor.state = .Traverse
         if o.bypass { d.actor.state = .Execute }
-        if d.waited >= DRIVER_STALL_SECONDS { d.actor.junction_yielded = true }
     } else if o.lane { d.actor.state = .Pass
     } else if o.signal_hold { d.actor.state = .Wait_Signal
-    } else if o.following { d.actor.state = .Follow_Queue }
+    } else if o.following { d.actor.state = .Follow_Queue
+    } else if o.pass_candidate { d.actor.state = .Queue_Approach }
     publish_driver_mode(d)
 }
 
@@ -103,7 +114,7 @@ initialize_driver_actor :: proc(d: ^Driver, o: Driver_Observation, time: f64) {
 publish_driver_mode :: proc(d: ^Driver) {
     switch d.actor.state {
     case .Cruise, .Completed: d.mode = .Cruising
-    case .Follow_Queue:
+    case .Follow_Queue, .Queue_Approach:
         d.mode = .Following
         if d.patience > 0 && d.waited >= d.patience { d.mode = .Seeking }
     case .Wait_Signal: d.mode = .Stopped_Signal
@@ -131,6 +142,7 @@ driver_physical_state :: proc(o: Driver_Observation, feedback: Driver_Feedback) 
     if o.signal_hold { return .Wait_Signal }
     if o.at_entry && feedback.reason != .None { return .Wait_Entry }
     if o.following { return .Follow_Queue }
+    if o.pass_candidate { return .Queue_Approach }
     return .Cruise
 }
 
@@ -145,13 +157,21 @@ driver_receive :: proc(d: ^Driver, event: Driver_Event) {
     switch event.kind {
     case .Tick:
         d.actor.intent = .Continue
+        // Queue patience is a preference, not proof of being stuck. Preserve
+        // its existing accumulation through slow following and signal waits;
+        // actual no-progress below is a separate execution measurement.
+        switch d.actor.state {
+        case .Follow_Queue, .Queue_Approach, .Wait_Signal, .Wait_Entry, .Yield_Junction: d.waited += event.dt
+        case .Cruise: d.waited = 0
+        case .Pass, .Traverse, .Plan, .Execute, .Retry, .Completed:
+        }
         // Shared Driving guard: no recovery pressure from a mandatory signal
         // hold. Already-committed junction drivers are not new red entrants.
         if o.signal_hold {
-            d.waited = 0
+            d.actor.no_progress = 0
             driver_transition(d, .Wait_Signal, event.time)
         } else {
-            stalled := d.motion_blocked || d.waited >= DRIVER_STALL_SECONDS || o.near_end
+            stalled := d.motion_blocked || o.stopped_leader || d.actor.no_progress >= DRIVER_STALL_SECONDS || o.near_end
             if o.can_recover && (o.speed < 0.5 || o.near_end) && stalled {
                 // Recovery parent handles the deadline for every child. An
                 // executing, moving prefix remains stable until it needs help.
@@ -165,7 +185,7 @@ driver_receive :: proc(d: ^Driver, event: Driver_Event) {
                 }
             } else {
                 driver_transition(d, driver_physical_state(o, d.actor.last), event.time)
-                if !o.motion && !o.lane && o.following { d.actor.intent = .Pass }
+                if !o.motion && !o.lane && (o.following || o.pass_candidate) { d.actor.intent = .Pass }
             }
         }
     case .Maneuver_Result:
@@ -182,7 +202,7 @@ driver_receive :: proc(d: ^Driver, event: Driver_Event) {
         if result.finished {
             driver_transition(d, .Completed, event.time)
         } else {
-            if o.signal_hold || result.moved > 0.000001 { d.waited = 0 } else { d.waited += event.dt }
+            if o.signal_hold || result.moved > 0.000001 { d.actor.no_progress = 0 } else { d.actor.no_progress += event.dt }
             if o.motion && !o.bypass {
                 if result.moved > 0.000001 { d.actor.junction_wait = 0
                 } else if !o.signal_hold { d.actor.junction_wait += event.dt }

@@ -75,7 +75,7 @@ valid :: proc(s: Snapshot) -> bool {
             a := v.driver.actor
             if int(a.state) < 0 || int(a.state) > int(sim.Driver_State.Completed) ||
                 int(a.intent) < 0 || int(a.intent) > int(sim.Driver_Intent.Recover) ||
-                !finite(a.since) || a.since < 0 || !finite(a.junction_wait) || a.junction_wait < 0 ||
+                !finite(a.since) || a.since < 0 || !finite(a.no_progress) || a.no_progress < 0 || !finite(a.junction_wait) || a.junction_wait < 0 ||
                 !valid_feedback(a.last) || !valid_feedback(a.plan) { return false }
         }
         if len(s.spawns) > 0 && (v.spawn_index < 0 || v.spawn_index >= len(s.spawns)) { return false }
@@ -142,7 +142,6 @@ restore :: proc(w: ^sim.World, s: Snapshot) -> bool {
             following: sim.Following_Observation
             _ = sim.following_acceleration(&next, v, i, headway, preferred, &following)
             sim.initialize_driver_actor(&v.driver, sim.observe_driver(&next, i, following), next.time)
-            v.driver.waited = 0
             sim.publish_driver_mode(&v.driver)
         }
     }

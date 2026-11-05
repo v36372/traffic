@@ -26,6 +26,7 @@ test_cli_session_controls_one_owned_world_without_a_display :: proc(t: ^testing.
     actor.state, actor.intent, actor.since, actor.attempts = .Retry, .Recover, 0.05, 3
     actor.last = {reason = .Body, blocker = 19}
     actor.plan = {attempted = true, reason = .Search_Limit}
+    actor.no_progress = 0.4
     s.world.vehicles[0].driver.waited, s.world.vehicles[0].driver.replan_after = 0.4, 0.8
     view := driver_view(&s, s.world.vehicles[0], 0)
     encoded, encoded_ok := encode_reply(&s, "inspect", true, struct { driver: Driver_View }{view})

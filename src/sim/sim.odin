@@ -263,7 +263,7 @@ step_tick :: proc(w: ^World, dt: f32) {
         v := w.vehicles[i]
         headway, acceleration := f32(0.8), f32(2)
         if w.behavior.enabled { headway, acceleration = v.driver.traits.headway, v.driver.traits.acceleration }
-        if v.motion.active && connector_is_left(v.motion) && v.driver.actor.junction_yielded { acceleration = max(acceleration, 3.5) }
+        if v.motion.active && connector_is_left(v.motion) && (v.driver.waited >= DRIVER_STALL_SECONDS || v.driver.actor.junction_yielded) { acceleration = max(acceleration, 3.5) }
         following: Following_Observation
         adjustment := following_acceleration(w, v, i, headway, acceleration, &following)
         observation := observe_driver(w, i, following)
@@ -291,7 +291,7 @@ step_tick :: proc(w: ^World, dt: f32) {
             if v.motion.bypass { target = min(target, 2) }
             // After yielding in the box, complete a left at a committed pace
             // rather than crawling the rest of the curve at the 4 m/s target.
-            if connector_is_left(v.motion) && v.driver.actor.state == .Traverse && v.driver.actor.junction_yielded {
+            if connector_is_left(v.motion) && v.driver.actor.state == .Traverse && (v.driver.waited >= DRIVER_STALL_SECONDS || v.driver.actor.junction_yielded) {
                 cap := min(w.roads[v.road].speed_limit, kind_speed(v.kind))
                 if v.motion.exit >= 0 { cap = min(cap, w.roads[v.motion.exit].speed_limit) }
                 target = min(cap, 6.5)
@@ -335,7 +335,7 @@ step_tick :: proc(w: ^World, dt: f32) {
             }
         }
         speed := v.speed
-        if v.motion.active && connector_is_left(v.motion) && v.driver.actor.state == .Traverse && v.driver.actor.junction_yielded {
+        if v.motion.active && connector_is_left(v.motion) && v.driver.actor.state == .Traverse && (v.driver.waited >= DRIVER_STALL_SECONDS || v.driver.actor.junction_yielded) {
             acceleration = max(acceleration, 3.5)
         }
         if speed < target { speed = min(target, speed+acceleration*dt) } else { speed = max(target, speed-4*dt) }

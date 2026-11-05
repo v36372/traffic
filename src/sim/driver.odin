@@ -13,8 +13,9 @@ Driver :: struct {
     mode: Driver_Mode,
     side: f32,
     aggressiveness, patience, turn_bias, wander, waited: f32,
-    // Actor-owned no-progress timer (waited), retry deadline and published
+    // Actor-owned queue patience (waited), retry deadline and published
     // legacy fields are retained for historical native replay captures.
+    // Actual no-progress is measured separately in actor.no_progress.
     replan_after: f64,
     motion_blocked: bool,
     actor: Driver_Actor,
@@ -58,7 +59,7 @@ behavior_varied :: proc(config: Driver_Config) -> bool {
 // A value-owned trip: no world or shared RNG is retained. IDs must be nonzero.
 make_driver :: proc(config: Driver_Config, seed, id: u64, kind: Vehicle_Kind, persona: Driver_Persona) -> (Driver, bool) {
     if !valid_driver_config(config) || id == 0 || int(kind) < 0 || int(kind) > int(Vehicle_Kind.Tricycle) || int(persona) < 0 || int(persona) > int(Driver_Persona.Assertive) { return {}, false }
-    d := Driver{persona = persona, kind = kind, side = -1, traits = {1, 0.8, 2}}
+    d := Driver{persona = persona, kind = kind, side = -1, traits = {1, 0.8, 2}, actor = {initialized = true}}
     if driver_sample(seed, id, 0x082efa98ec4e6c89) >= 0.5 { d.side = 1 }
     if config.enabled {
         r := config.classes[int(kind)]
