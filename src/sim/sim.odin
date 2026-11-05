@@ -195,6 +195,7 @@ try_spawn :: proc(w: ^World) {
     if !source_supported(w, candidate) { return }
     candidate.id, candidate.preferred_lateral = u64(w.spawned+1), lateral
     candidate.driver, _ = make_driver(w.behavior, w.behavior_seed, candidate.id, kind, spawn_persona(w.behavior, w.behavior_seed, candidate.id))
+    driver_receive(&candidate.driver, Driver_Event{kind = .Admitted, time = w.time})
     append(&w.vehicles, candidate)
     w.spawned += 1
 }

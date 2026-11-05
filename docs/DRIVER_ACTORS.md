@@ -14,7 +14,7 @@ Each native serial turn processes this fixed, bounded inbox protocol:
 4. **Execute:** apply the normal speed/following controller and authoritative movement guards. Recompute following only if an accepted maneuver changed the guide.
 5. **Motion_Result:** deliver actual travelled metres, completion and the execution veto, if any. The actor updates its state and timers.
 
-There is at most one maneuver request per driver per tick, not an unbounded event/action loop. The inbox is drained synchronously: no undelivered external queue is hidden outside the saved actor value. Successful admission creates a trip actor; actual trip completion removes it. Pending arrivals are not discarded or represented as active actors.
+There is at most one maneuver request per driver per tick, not an unbounded event/action loop. The inbox is drained synchronously: no undelivered external queue is hidden outside the saved actor value. Successful admission creates a trip actor and sends Admitted with the current simulation time, so its initial state-entry timestamp is correct; actual trip completion removes it. Pending arrivals are not discarded or represented as active actors.
 
 Serial array order remains stable; later drivers observe earlier committed motion. Entry-sequence conflict priority is unchanged. This is deterministic but deliberately **not order-independent**. Actors do not mutate neighboring actors. A whole-tick perception/intent/commit scheduler would change these semantics and is outside this slice. Normal gameplay still steps at 50ms; `sim.step` retains its existing at-most-50ms substeps. Rendering still interpolates authoritative simulation poses without feeding presentation back into decisions.
 

@@ -207,15 +207,21 @@ test_factory_used_by_both_spawn_paths :: proc(t: ^testing.T) {
         cache_geometry(&w)
         if scheduled {
             testing.expect(t, configure(&w, nil, []Spawn_Point{{road = 0, destination = 1, interval = 1, kind = .Car}}))
+            w.time = 100
             scheduled_spawns(&w, 1)
         } else {
+            w.time = 100
             for _ in 0..<100 { if len(w.vehicles) > 0 { break }; try_spawn(&w) }
         }
         testing.expect(t, len(w.vehicles) > 0)
         if len(w.vehicles) > 0 {
             v := w.vehicles[0]
             expected, ok := make_driver(config, 22, v.id, v.kind, spawn_persona(config, 22, v.id))
-            testing.expect(t, ok && v.driver == expected)
+            expected.actor.since = 100
+            testing.expect(t, ok && v.driver == expected, "both admission paths must stamp the actor's initial state at admission")
+            step(&w, 0.05)
+            testing.expect(t, w.vehicles[0].driver.actor.state == .Cruise && w.vehicles[0].driver.actor.since == 100,
+                "a later-spawned driver remaining in Cruise must retain its actual admission time")
         }
     }
 }

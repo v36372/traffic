@@ -5,7 +5,7 @@ package sim
 Driver_Region :: enum { Route, Maneuver, Recovery, Done }
 Driver_State :: enum { Cruise, Follow_Queue, Queue_Approach, Wait_Signal, Wait_Entry, Pass, Traverse, Yield_Junction, Plan, Execute, Retry, Completed }
 Driver_Intent :: enum { Continue, Pass, Recover }
-Driver_Event_Kind :: enum { Tick, Maneuver_Result, Motion_Result }
+Driver_Event_Kind :: enum { Tick, Maneuver_Result, Motion_Result, Admitted }
 Driver_Actor :: struct {
     initialized: bool,
     state: Driver_State,
@@ -155,6 +155,8 @@ driver_receive :: proc(d: ^Driver, event: Driver_Event) {
     if d.actor.state == .Completed { return }
     d.actor.filtering = o.filtering
     switch event.kind {
+    case .Admitted:
+        d.actor.since = event.time
     case .Tick:
         d.actor.intent = .Continue
         // Queue patience is a preference, not proof of being stuck. Preserve
