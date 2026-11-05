@@ -200,7 +200,7 @@ test_driver_modes_track_maneuvers :: proc(t: ^testing.T) {
     w: World; passing_world(&w, false); defer destroy(&w)
     cache_geometry(&w)
     update_driver_mode(&w, 1); testing.expect(t, w.vehicles[1].driver.mode == .Following)
-    try_overtake(&w, 1); testing.expect(t, w.vehicles[1].driver.mode == .Passing)
+    try_overtake(&w, 1); testing.expect(t, w.vehicles[1].lane.active)
     w.vehicles[1].lane = {}; w.vehicles[0].distance = 100
     update_driver_mode(&w, 1); testing.expect(t, w.vehicles[1].driver.mode == .Cruising)
     w.vehicles[0].distance = 55

@@ -350,12 +350,13 @@ body_poses_overlap :: proc(p, f: Vec2, a: Vehicle_Kind, q, g: Vec2, b: Vehicle_K
     }
     return true
 }
-body_clear :: proc(w: ^World, candidate: Vehicle, ignore: int = -1) -> bool {
+body_clear :: proc(w: ^World, candidate: Vehicle, ignore: int = -1, blocker: ^u64 = nil) -> bool {
+    if blocker != nil { blocker^ = 0 }
     p, f := vehicle_pose(w, candidate)
     for other, i in w.vehicles {
         if i == ignore { continue }
         q, g := vehicle_pose(w, other)
-        if body_poses_overlap(p, f, candidate.kind, q, g, other.kind) { return false }
+        if body_poses_overlap(p, f, candidate.kind, q, g, other.kind) { if blocker != nil { blocker^ = other.id }; return false }
     }
     return true
 }
@@ -512,7 +513,8 @@ forecast_vehicle :: proc(w: ^World, v: Vehicle, distance: f32) -> Vehicle {
 // always block regardless of priority. O(n * horizon / 0.05s), capped at 120;
 // use a spatial neighbor index before increasing the population.
 // This constant-speed prediction is not a collision/deadlock proof.
-local_gap_clear :: proc(w: ^World, candidate: Vehicle, ignore: int, speed: f32, horizon := f32(1.5)) -> bool {
+local_gap_clear :: proc(w: ^World, candidate: Vehicle, ignore: int, speed: f32, horizon := f32(1.5), blocker: ^u64 = nil) -> bool {
+    if blocker != nil { blocker^ = 0 }
     p, _ := vehicle_pose(w, candidate)
     samples := int(horizon/0.05+0.001)
     if samples < 1 { samples = 1 }
@@ -551,23 +553,24 @@ local_gap_clear :: proc(w: ^World, candidate: Vehicle, ignore: int, speed: f32, 
                 b := forecast_vehicle(w, other, other_speed*time)
                 q, g = vehicle_pose(w, b)
             }
-            if body_poses_overlap(poses[index][0], poses[index][1], candidate.kind, q, g, other.kind) { return false }
+            if body_poses_overlap(poses[index][0], poses[index][1], candidate.kind, q, g, other.kind) { if blocker != nil { blocker^ = other.id }; return false }
             if speed == 0 && other_speed == 0 { break } // All samples are identical.
         }
     }
     return true
 }
 
-acquire_connector :: proc(w: ^World, i, exit: int) -> bool {
+acquire_connector :: proc(w: ^World, i, exit: int, feedback: ^Driver_Feedback = nil) -> bool {
+    if feedback != nil { feedback^ = {attempted = true} }
     v := w.vehicles[i]
     candidates := connector_laterals(w, v, exit)
     defer delete(candidates)
-    if len(candidates) == 0 { report_motion_issue(w, v, exit, .Short_Exit); return false }
+    if len(candidates) == 0 { report_motion_issue(w, v, exit, .Short_Exit); set_driver_feedback(feedback, .Geometry, 0, .Short_Exit); return false }
     unfit, geometry_found := false, false
     for lateral in candidates {
         c, problem := make_connector(w, v, exit, lateral)
         if problem == .Tight_Turn || problem == .U_Turn { unfit = true; continue }
-        if problem != .None { report_motion_issue(w, v, exit, problem); return false }
+        if problem != .None { report_motion_issue(w, v, exit, problem); set_driver_feedback(feedback, .Geometry, 0, problem); return false }
         geometry_found = true
         c.sequence = w.entry_sequence+1
         trial := v
@@ -575,9 +578,16 @@ acquire_connector :: proc(w: ^World, i, exit: int) -> bool {
         // Prefer the nearest receiving band, but if its trajectory is occupied,
         // try the next fitted band rather than waiting behind a face-to-face
         // conflict. Each alternative still passes the same body and time-gap checks.
-        if !body_clear(w, trial, i) || !local_gap_clear(w, trial, i, v.speed, gap_horizon(v.driver)) {
+        blocker: u64
+        if !body_clear(w, trial, i, &blocker) {
+            set_driver_feedback(feedback, .Body, blocker)
             continue
         }
+        if !local_gap_clear(w, trial, i, v.speed, gap_horizon(v.driver), &blocker) {
+            set_driver_feedback(feedback, .Predicted_Conflict, blocker)
+            continue
+        }
+        if feedback != nil { feedback^ = {attempted = true, accepted = true} }
         w.entry_sequence += 1
         w.vehicles[i].motion = c
         return true
@@ -586,7 +596,9 @@ acquire_connector :: proc(w: ^World, i, exit: int) -> bool {
         _, f := vehicle_pose(w, v)
         g := f
         if exit >= 0 { _, g = vehicle_pose(w, Vehicle{road = exit}) }
-        report_motion_issue(w, v, exit, heading_reverses(f, g) ? .U_Turn : .Tight_Turn)
+        problem := heading_reverses(f, g) ? Motion_Problem.U_Turn : .Tight_Turn
+        report_motion_issue(w, v, exit, problem)
+        set_driver_feedback(feedback, .Geometry, 0, problem)
     }
     return false
 }
@@ -594,8 +606,15 @@ acquire_connector :: proc(w: ^World, i, exit: int) -> bool {
 // Advance along actual simulation segments, carrying the budget across both
 // connector boundaries. <= 0.10m spatial checks prevent tunnelling at coarse dt;
 // this sampled body model is not a certification of arbitrary swept geometry.
-move_vehicle :: proc(w: ^World, i: int, budget: f32) -> (travelled: f32, finished: bool) {
-    w.vehicles[i].driver.motion_blocked = false
+move_vehicle :: proc(w: ^World, i: int, budget: f32, feedback: ^Driver_Feedback = nil) -> (travelled: f32, finished: bool) {
+    if feedback != nil { feedback^ = {attempted = budget > 0} }
+    defer if feedback != nil {
+        feedback.moved = travelled
+        feedback.finished = finished
+        feedback.accepted = travelled > 0 || finished
+        feedback.partial = travelled > 0 && !finished && travelled+0.000001 < budget
+    }
+    blocker: u64
     hull: [dynamic]Vec2
     if w.vehicles[i].motion.steering_count > 0 && !w.vehicles[i].motion.local { hull = junction_polygon(w, w.vehicles[i].motion.node) }
     defer delete(hull)
@@ -606,7 +625,7 @@ move_vehicle :: proc(w: ^World, i: int, budget: f32) -> (travelled: f32, finishe
             exit := successor(w, v)
             if exit < 0 && v.distance >= road_length(w, v.road)-0.000001 {
                 _, problem := make_connector(w, v, exit, v.lateral)
-                if problem != .None { report_motion_issue(w, v, exit, problem); break }
+                if problem != .None { report_motion_issue(w, v, exit, problem); set_driver_feedback(feedback, .Geometry, 0, problem); break }
                 return travelled, true
             }
             boundary := max(v.distance, max(0, entry_distance(w, v.road, v.kind)))
@@ -616,20 +635,24 @@ move_vehicle :: proc(w: ^World, i: int, budget: f32) -> (travelled: f32, finishe
                 boundary = min(boundary, max(0, stop))
             }
             if v.distance >= boundary-0.000001 {
-                if (state == .Red || state == .Amber) && v.distance <= stop+0.0001 { break }
-                if !acquire_connector(w, i, exit) { break }
+                if (state == .Red || state == .Amber) && v.distance <= stop+0.0001 { set_driver_feedback(feedback, .Signal); break }
+                admission: Driver_Feedback
+                if !acquire_connector(w, i, exit, &admission) {
+                    set_driver_feedback(feedback, admission.reason, admission.blocker, admission.problem)
+                    break
+                }
                 continue
             }
-            if v.lane.active && !lane_rear_safe(w, i, v, false) { w.vehicles[i].driver.motion_blocked = true; break }
+            if v.lane.active && !lane_rear_safe(w, i, v, false, &blocker) { set_driver_feedback(feedback, .Rear_Gap, blocker); break }
             amount := min(left, min(0.1, boundary-v.distance))
             trial := v
             trial.distance += amount
             if trial.lane.active {
                 trial.lateral, _ = lane_offset(trial)
-                if !local_gap_clear(w, trial, i, v.speed, gap_horizon(v.driver)) { w.vehicles[i].driver.motion_blocked = true; break }
+                if !local_gap_clear(w, trial, i, v.speed, gap_horizon(v.driver), &blocker) { set_driver_feedback(feedback, .Predicted_Conflict, blocker); break }
                 if trial.distance >= trial.lane.start+lane_change_length(trial) { trial.lane = {} }
             }
-            if !body_clear(w, trial, i) { w.vehicles[i].driver.motion_blocked = true; break }
+            if !body_clear(w, trial, i, &blocker) { set_driver_feedback(feedback, .Body, blocker); break }
             w.vehicles[i] = trial
             left -= amount
             travelled += amount
@@ -641,19 +664,21 @@ move_vehicle :: proc(w: ^World, i: int, budget: f32) -> (travelled: f32, finishe
                 p, f := vehicle_pose(w, trial)
                 permitted := -1
                 if trial.motion.local { permitted = trial.road }
-                if !body_on_junction_pavement(w, trial.motion.node, p, f, trial.kind, hull[:], permitted, permitted) { w.vehicles[i].driver.motion_blocked = true; break }
+                if !body_on_junction_pavement(w, trial.motion.node, p, f, trial.kind, hull[:], permitted, permitted) { set_driver_feedback(feedback, .Pavement); break }
             }
-            if !body_clear(w, trial, i) || !local_gap_clear(w, trial, i, v.speed, gap_horizon(v.driver)) { w.vehicles[i].driver.motion_blocked = true; break }
+            if !body_clear(w, trial, i, &blocker) { set_driver_feedback(feedback, .Body, blocker); break }
+            if !local_gap_clear(w, trial, i, v.speed, gap_horizon(v.driver), &blocker) { set_driver_feedback(feedback, .Predicted_Conflict, blocker); break }
             if trial.motion.progress >= trial.motion.length-0.000001 {
                 if trial.motion.partial {
                     w.vehicles[i] = trial
                     travelled += amount
+                    set_driver_feedback(feedback, .Partial_End)
                     break
                 }
                 if trial.motion.exit < 0 { return travelled+amount, true }
                 trial.road, trial.distance, trial.lateral = trial.motion.exit, trial.motion.end, trial.motion.lateral
                 trial.motion = {}
-                if !body_clear(w, trial, i) { w.vehicles[i].driver.motion_blocked = true; break }
+                if !body_clear(w, trial, i, &blocker) { set_driver_feedback(feedback, .Body, blocker); break }
             }
             w.vehicles[i] = trial
             left -= amount

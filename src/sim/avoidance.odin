@@ -20,7 +20,9 @@ steering_less :: proc(a, b: Steering_Entry) -> bool {
 // The lattice is bounded to 2048 expansions / 8m / the 120-body population cap.
 // For larger junctions it executes a safe prefix and replans; raise the search
 // budget or use a spatial index before raising the population/accuracy ceiling.
-try_local_bypass :: proc(w: ^World, i: int) -> bool {
+try_local_bypass :: proc(w: ^World, i: int, feedback: ^Driver_Feedback = nil) -> bool {
+    if feedback != nil { feedback^ = {attempted = true, reason = .No_Plan} }
+    blocker: u64
     v := w.vehicles[i]
     c := v.motion
     if !c.active {
@@ -28,16 +30,16 @@ try_local_bypass :: proc(w: ^World, i: int) -> bool {
         maximum := entry_distance(w, v.road, v.kind)
         state := signal_state(w, v.road)
         radius := 0.5*math.sqrt(kind_length(v.kind)*kind_length(v.kind)+kind_width(v.kind)*kind_width(v.kind))
-        if (state == .Red || state == .Amber) && v.distance+pass_length(v)+radius >= maximum { return false }
-        if maximum-v.distance <= 2*kind_length(v.kind)+STEERING_STEP { return false }
+        if (state == .Red || state == .Amber) && v.distance+pass_length(v)+radius >= maximum { set_driver_feedback(feedback, .Signal); return false }
+        if maximum-v.distance <= 2*kind_length(v.kind)+STEERING_STEP { set_driver_feedback(feedback, .Route_Boundary); return false }
         p, f := vehicle_pose(w, v)
         c = Connector{active = true, local = true, node = w.roads[v.road].from, exit = v.road,
             end = v.distance+2*kind_length(v.kind), length = maximum-v.distance,
             start = p, forward = f, outgoing = f}
     }
     nearing_end := v.motion.active && (c.partial || v.speed < 0.5) && c.length-c.progress <= max(0.5, v.speed*v.speed/8+v.speed*0.05)
-    if c.exit < 0 || c.progress < c.lead || (v.speed >= 0.5 && !nearing_end) || w.time < v.driver.replan_after { return false }
-    w.vehicles[i].driver.replan_after = w.time+0.5
+    if c.exit < 0 { set_driver_feedback(feedback, .Route_Boundary); return false }
+    if c.progress < c.lead || (v.speed >= 0.5 && !nearing_end) { return false }
     // A real zero-speed execution failure is enough reason to reconsider.
     // A coarse future-body probe can miss the tiny rotation that blocked the
     // last tick, or the controller/prediction rather than a static body.
@@ -61,7 +63,7 @@ try_local_bypass :: proc(w: ^World, i: int) -> bool {
     minimum := kind_length(v.kind)*0.5+0.025
     if c.local { minimum = c.end }
     maximum := min(entry_distance(w, c.exit, v.kind), road_length(w, c.exit)-kind_length(v.kind)*0.5)
-    if maximum < minimum { return false }
+    if maximum < minimum { set_driver_feedback(feedback, .Route_Boundary); return false }
     along := (start.x-origin.x)*axis.x+(start.y-origin.y)*axis.y
     _, already_docked := steering_goal(start, forward, origin, axis, minimum, maximum, w.roads[c.exit].width, v.kind)
     if already_docked {
@@ -69,7 +71,8 @@ try_local_bypass :: proc(w: ^World, i: int) -> bool {
         trial.road, trial.distance = c.exit, along
         trial.lateral = -(start.x-origin.x)*axis.y+(start.y-origin.y)*axis.x
         trial.motion, trial.lane = {}, {}
-        if !body_clear(w, trial, i) { return false }
+        if !body_clear(w, trial, i, &blocker) { set_driver_feedback(feedback, .Body, blocker); return false }
+        if feedback != nil { feedback^ = {attempted = true, accepted = true, finished = true} }
         w.vehicles[i] = trial
         return true
     }
@@ -168,14 +171,18 @@ try_local_bypass :: proc(w: ^World, i: int) -> bool {
         }
     }
     if chosen < 0 { chosen = best }
-    if chosen < 0 { return false }
+    if chosen < 0 {
+        set_driver_feedback(feedback, (expanded >= 2048 || len(nodes) >= 8192) ? .Search_Limit : .No_Plan)
+        return false
+    }
     end := nodes[chosen]
     _, complete := steering_goal(end.p, end.f, origin, axis, minimum, maximum, w.roads[c.exit].width, v.kind)
     candidate := steering_connector(c, nodes[:], chosen, origin, axis, complete)
     trial := v
     trial.motion = candidate
     trial.lane = {}
-    if !local_gap_clear(w, trial, i, max(0.5, min(1, v.speed)), gap_horizon(v.driver)) { return false }
+    if !local_gap_clear(w, trial, i, max(0.5, min(1, v.speed)), gap_horizon(v.driver), &blocker) { set_driver_feedback(feedback, .Predicted_Conflict, blocker); return false }
+    if feedback != nil { feedback^ = {attempted = true, accepted = true, partial = !complete} }
     w.vehicles[i].motion = candidate
     w.vehicles[i].lane = {}
     return true

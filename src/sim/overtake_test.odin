@@ -295,5 +295,5 @@ test_impatient_motorcycle_takes_small_gap_after_waiting :: proc(t: ^testing.T) {
     w.vehicles[1].driver.waited = 0.5
     try_overtake(&w, 1)
     testing.expect(t, w.vehicles[1].lane.active && w.vehicles[1].lane.length == 6)
-    testing.expect(t, w.vehicles[1].driver.mode == .Filtering)
+    testing.expect(t, w.vehicles[1].lane.active && lane_change_length(w.vehicles[1]) < LANE_CHANGE_LENGTH)
 }

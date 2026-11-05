@@ -24,7 +24,8 @@ lane_offset :: proc(v: Vehicle) -> (offset, slope: f32) {
 // The closing-speed horizon covers the remaining transition at current speed
 // (floor 1m/s), plus two seconds. Recheck during steering; sampled world-body
 // checks still arbitrate actual movement if the prediction changes.
-lane_rear_safe :: proc(w: ^World, i: int, v: Vehicle, predictive: bool) -> bool {
+lane_rear_safe :: proc(w: ^World, i: int, v: Vehicle, predictive: bool, blocker: ^u64 = nil) -> bool {
+    if blocker != nil { blocker^ = 0 }
     radius := 0.5*math.sqrt(kind_length(v.kind)*kind_length(v.kind)+kind_width(v.kind)*kind_width(v.kind))
     remaining := max(0, v.lane.start+lane_change_length(v)-v.distance)
     horizon := 2+remaining/max(1, v.speed)
@@ -50,19 +51,20 @@ lane_rear_safe :: proc(w: ^World, i: int, v: Vehicle, predictive: bool) -> bool 
         }
         closing := max(0, speed-v.speed)
         gap := v.distance-other.distance-(kind_length(v.kind)+kind_length(other.kind))*0.5
-        if gap < 1.2+closing*horizon { return false }
+        if gap < 1.2+closing*horizon { if blocker != nil { blocker^ = other.id }; return false }
     }
     return true
 }
 
-try_overtake :: proc(w: ^World, i: int) {
+try_overtake :: proc(w: ^World, i: int, feedback: ^Driver_Feedback = nil) {
+    if feedback != nil { feedback^ = {attempted = true, reason = .No_Plan} }
     v := w.vehicles[i]
     // Safe passing is an ordinary maneuver, independent of trait variation.
     if v.motion.active || v.lane.active { return }
     radius := 0.5*math.sqrt(kind_length(v.kind)*kind_length(v.kind)+kind_width(v.kind)*kind_width(v.kind))
     length := pass_length(v)
-    if v.distance-radius <= junction_setback(w, v.road, true, true)+1+CROSSING_DEPTH { return }
-    if v.distance+length+radius >= entry_distance(w, v.road, v.kind) { return }
+    if v.distance-radius <= junction_setback(w, v.road, true, true)+1+CROSSING_DEPTH { set_driver_feedback(feedback, .Protected_Approach); return }
+    if v.distance+length+radius >= entry_distance(w, v.road, v.kind) { set_driver_feedback(feedback, .Route_Boundary); return }
     // Do not start a second maneuver behind one still changing bands.
     for other in w.vehicles { if other.lane.active && other.road == v.road && other.distance >= v.distance && other.distance-v.distance < 35 { return } }
     target := min(w.roads[v.road].speed_limit, kind_speed(v.kind))
@@ -91,17 +93,20 @@ try_overtake :: proc(w: ^World, i: int) {
         // The cubic's maximum slope is 1.5*shift/length. Projecting the
         // rectangle with sin(angle)<=slope conservatively bounds its corners.
         extent := kind_width(v.kind)*0.5+kind_length(v.kind)*0.5*1.5*abs(candidate.lane.to-candidate.lane.from)/length
-        if max(abs(candidate.lane.from), abs(candidate.lane.to))+extent > w.roads[v.road].width*0.5 || !lane_rear_safe(w, i, candidate, true) { continue }
+        if max(abs(candidate.lane.from), abs(candidate.lane.to))+extent > w.roads[v.road].width*0.5 { set_driver_feedback(feedback, .Pavement); continue }
+        blocker: u64
+        if !lane_rear_safe(w, i, candidate, true, &blocker) { set_driver_feedback(feedback, .Rear_Gap, blocker); continue }
         clear := true
         for k in 0..=steps {
             trial := candidate
             trial.distance = min(v.distance+length, v.distance+f32(k)*0.1)
             trial.lateral, _ = lane_offset(trial)
-            if !body_clear(w, trial, i) || !local_gap_clear(w, trial, i, v.speed, horizon) { clear = false; break }
+            if !body_clear(w, trial, i, &blocker) { set_driver_feedback(feedback, .Body, blocker); clear = false; break }
+            if !local_gap_clear(w, trial, i, v.speed, horizon, &blocker) { set_driver_feedback(feedback, .Predicted_Conflict, blocker); clear = false; break }
         }
         if clear {
             w.vehicles[i].lane = candidate.lane
-            w.vehicles[i].driver.mode = length < LANE_CHANGE_LENGTH ? .Filtering : .Passing
+            if feedback != nil { feedback^ = {attempted = true, accepted = true} }
             return
         }
     }
