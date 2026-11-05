@@ -184,7 +184,8 @@ driver_receive :: proc(d: ^Driver, event: Driver_Event) {
         } else {
             if o.signal_hold || result.moved > 0.000001 { d.waited = 0 } else { d.waited += event.dt }
             if o.motion && !o.bypass {
-                if result.moved <= 0.000001 && !o.signal_hold { d.actor.junction_wait += event.dt }
+                if result.moved > 0.000001 { d.actor.junction_wait = 0
+                } else if !o.signal_hold { d.actor.junction_wait += event.dt }
                 if d.actor.junction_wait >= DRIVER_STALL_SECONDS { d.actor.junction_yielded = true }
             } else if !o.motion {
                 d.actor.junction_wait, d.actor.junction_yielded = 0, false
