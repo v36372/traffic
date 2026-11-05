@@ -261,22 +261,28 @@ step_tick :: proc(w: ^World, dt: f32) {
     i := 0
     for i < len(w.vehicles) {
         v := w.vehicles[i]
-        if v.driver.mode == .Following || v.driver.mode == .Seeking || v.driver.mode == .Stopped_Signal || v.driver.mode == .Following_Junction {
-            w.vehicles[i].driver.waited += dt
-        } else if v.driver.mode != .Passing && v.driver.mode != .Filtering && v.driver.mode != .Junction && v.driver.mode != .Avoiding {
-            w.vehicles[i].driver.waited = 0
+        headway, acceleration := f32(0.8), f32(2)
+        if w.behavior.enabled { headway, acceleration = v.driver.traits.headway, v.driver.traits.acceleration }
+        if v.motion.active && connector_is_left(v.motion) && v.driver.actor.junction_yielded { acceleration = max(acceleration, 3.5) }
+        following: Following_Observation
+        adjustment := following_acceleration(w, v, i, headway, acceleration, &following)
+        observation := observe_driver(w, i, following)
+        driver_receive(&w.vehicles[i].driver, Driver_Event{kind = .Tick, time = w.time, dt = dt, observation = observation})
+        intent := w.vehicles[i].driver.actor.intent
+        plan: Driver_Feedback
+        switch intent {
+        case .Recover: _ = try_local_bypass(w, i, &plan)
+        case .Pass: try_overtake(w, i, &plan)
+        case .Continue:
         }
-        try_local_bypass(w, i)
-        update_driver_mode(w, i)
-        if driver_should_pass(w.vehicles[i]) { try_overtake(w, i) }
+        if intent != .Continue {
+            observation = observe_driver(w, i, following)
+            driver_receive(&w.vehicles[i].driver, Driver_Event{kind = .Maneuver_Result, time = w.time, observation = observation, feedback = plan})
+        }
         v = w.vehicles[i]
         target := min(w.roads[v.road].speed_limit, kind_speed(v.kind))
         if v.motion.active && v.motion.exit >= 0 { target = min(target, w.roads[v.motion.exit].speed_limit) }
-        headway := f32(0.8)
-        if w.behavior.enabled {
-            target *= v.driver.traits.speed_factor
-            headway = v.driver.traits.headway
-        }
+        if w.behavior.enabled { target *= v.driver.traits.speed_factor }
         // These are targets, not hard limits: finite braking can leave an
         // entering vehicle temporarily above a curve or receiving-road target.
         if v.motion.active {
@@ -285,7 +291,7 @@ step_tick :: proc(w: ^World, dt: f32) {
             if v.motion.bypass { target = min(target, 2) }
             // After yielding in the box, complete a left at a committed pace
             // rather than crawling the rest of the curve at the 4 m/s target.
-            if connector_is_left(v.motion) && v.driver.mode == .Junction && v.driver.waited >= 0.25 {
+            if connector_is_left(v.motion) && v.driver.actor.state == .Traverse && v.driver.actor.junction_yielded {
                 cap := min(w.roads[v.road].speed_limit, kind_speed(v.kind))
                 if v.motion.exit >= 0 { cap = min(cap, w.roads[v.motion.exit].speed_limit) }
                 target = min(cap, 6.5)
@@ -329,27 +335,34 @@ step_tick :: proc(w: ^World, dt: f32) {
             }
         }
         speed := v.speed
-        acceleration := f32(2)
-        if w.behavior.enabled { acceleration = v.driver.traits.acceleration }
-        if v.motion.active && connector_is_left(v.motion) && v.driver.mode == .Junction && v.driver.waited >= 0.25 {
+        if v.motion.active && connector_is_left(v.motion) && v.driver.actor.state == .Traverse && v.driver.actor.junction_yielded {
             acceleration = max(acceleration, 3.5)
         }
         if speed < target { speed = min(target, speed+acceleration*dt) } else { speed = max(target, speed-4*dt) }
-        speed = max(0, min(speed, v.speed+following_acceleration(w, v, i, headway, acceleration)*dt))
+        // Reuse perception unless an accepted maneuver changed the actual guide.
+        if plan.accepted { adjustment = following_acceleration(w, v, i, headway, acceleration, &following) }
+        speed = max(0, min(speed, v.speed+adjustment*dt))
         budget := speed*dt
         // Following and execution both use actual world-space body clearance;
         // a second road/lateral projection would stop clear parallel traffic.
         // Forecast this tick's intended speed, not an invented minimum pace.
         // Movement may still be curtailed by emergency physical checks.
         w.vehicles[i].speed = speed
-        travelled, finished := move_vehicle(w, i, budget)
+        result: Driver_Feedback
+        travelled, finished := move_vehicle(w, i, budget, &result)
+        if result.reason == .None && travelled <= 0.000001 {
+            if observation.signal_hold { result.reason = .Signal
+            } else if following.found && budget <= 0.000001 { result.reason, result.blocker = .Following, following.leader }
+        }
+        result.moved, result.finished = travelled, finished
+        observation = observe_driver(w, i, following)
+        driver_receive(&w.vehicles[i].driver, Driver_Event{kind = .Motion_Result, time = w.time, dt = dt, observation = observation, feedback = result})
         if finished {
             w.completed += 1
             ordered_remove(&w.vehicles, i)
             continue
         }
         w.vehicles[i].speed = min(speed, travelled/dt)
-        update_driver_mode(w, i)
         i += 1
     }
 }

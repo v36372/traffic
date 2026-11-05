@@ -13,8 +13,11 @@ Driver :: struct {
     mode: Driver_Mode,
     side: f32,
     aggressiveness, patience, turn_bias, wander, waited: f32,
+    // Actor-owned no-progress timer (waited), retry deadline and published
+    // legacy fields are retained for historical native replay captures.
     replan_after: f64,
     motion_blocked: bool,
+    actor: Driver_Actor,
 }
 Driver_Config :: struct {
     enabled: bool,
@@ -114,11 +117,6 @@ pass_length :: proc(v: Vehicle) -> f32 {
     return length
 }
 
-driver_should_pass :: proc(v: Vehicle) -> bool {
-    if v.driver.mode == .Following || v.driver.mode == .Seeking { return true }
-    return v.kind == .Motorcycle && v.driver.aggressiveness > 0 && v.driver.mode == .Stopped_Signal
-}
-
 // Synthetic damped gap/closing-speed control, shared by links and connectors.
 // Personal acceleration is a ceiling, not a command to accelerate into a queue.
 // Measure contact along the actual guide, not overlapping tangent projections:
@@ -177,30 +175,6 @@ following_acceleration :: proc(w: ^World, v: Vehicle, ignore: int, headway, pref
     adjustment := 2*(lead_speed-v.speed)/response+(gap-desired_gap)/(response*response)
     if observation != nil { observation^ = {found, leader, gap, lead_speed, desired_gap, clamp(adjustment, -4, preferred)} }
     return clamp(adjustment, -4, preferred)
-}
-
-// Recompute from physical observations; maneuver state has priority over following.
-update_driver_mode :: proc(w: ^World, i: int) {
-    v := w.vehicles[i]
-    mode := Driver_Mode.Cruising
-    if v.motion.active {
-        mode = .Junction
-        if v.motion.bypass { mode = .Avoiding }
-        if !local_gap_clear(w, v, i, v.speed, gap_horizon(v.driver)) { mode = .Following_Junction }
-    } else if v.lane.active {
-        mode = .Passing
-        if v.lane.length > 0 && v.lane.length < LANE_CHANGE_LENGTH { mode = .Filtering }
-    } else if (signal_state(w, v.road) == .Red || signal_state(w, v.road) == .Amber) && v.speed < 0.1 && v.distance >= entry_distance(w, v.road, v.kind)-0.2 { mode = .Stopped_Signal
-    } else {
-        for lead, j in w.vehicles {
-            if i != j && lead.road == v.road && !lead.motion.active && lead.distance > v.distance && lead.distance-v.distance < 35 && abs(lead.lateral-v.lateral) < (kind_width(lead.kind)+kind_width(v.kind))*0.5+0.025 {
-                mode = .Following
-                if v.driver.patience > 0 && v.driver.waited >= v.driver.patience { mode = .Seeking }
-                break
-            }
-        }
-    }
-    w.vehicles[i].driver.mode = mode
 }
 
 // Varied configurations assign a stable synthetic persona to each trip.

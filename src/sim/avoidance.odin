@@ -39,7 +39,8 @@ try_local_bypass :: proc(w: ^World, i: int, feedback: ^Driver_Feedback = nil) ->
     }
     nearing_end := v.motion.active && (c.partial || v.speed < 0.5) && c.length-c.progress <= max(0.5, v.speed*v.speed/8+v.speed*0.05)
     if c.exit < 0 { set_driver_feedback(feedback, .Route_Boundary); return false }
-    if c.progress < c.lead || (v.speed >= 0.5 && !nearing_end) { return false }
+    if c.progress < c.lead { set_driver_feedback(feedback, .Protected_Approach); return false }
+    if v.speed >= 0.5 && !nearing_end { return false }
     // A real zero-speed execution failure is enough reason to reconsider.
     // A coarse future-body probe can miss the tiny rotation that blocked the
     // last tick, or the controller/prediction rather than a static body.

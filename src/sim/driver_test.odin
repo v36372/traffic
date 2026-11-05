@@ -196,31 +196,6 @@ test_explicit_persona_works_with_fixed_ranges :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_driver_modes_track_maneuvers :: proc(t: ^testing.T) {
-    w: World; passing_world(&w, false); defer destroy(&w)
-    cache_geometry(&w)
-    update_driver_mode(&w, 1); testing.expect(t, w.vehicles[1].driver.mode == .Following)
-    try_overtake(&w, 1); testing.expect(t, w.vehicles[1].lane.active)
-    w.vehicles[1].lane = {}; w.vehicles[0].distance = 100
-    update_driver_mode(&w, 1); testing.expect(t, w.vehicles[1].driver.mode == .Cruising)
-    w.vehicles[0].distance = 55
-    w.vehicles[1].driver.patience, w.vehicles[1].driver.waited = 1, 1
-    update_driver_mode(&w, 1); testing.expect(t, w.vehicles[1].driver.mode == .Seeking)
-    w.vehicles[1].driver.waited = 0
-    w.vehicles[1].lane = {active = true, start = 30, from = 0, to = 1, length = 6}
-    update_driver_mode(&w, 1); testing.expect(t, w.vehicles[1].driver.mode == .Filtering)
-    w.vehicles[1].lane = {}
-    w.vehicles[1].motion.active = true
-    update_driver_mode(&w, 1); testing.expect(t, w.vehicles[1].driver.mode == .Junction)
-    w.vehicles[1].motion = {}
-    append(&w.signals, Signal_Plan{node = 1, green = 1, amber = 1, clearance = 100, offset = 2})
-    cache_geometry(&w)
-    w.vehicles[1].distance = entry_distance(&w, 0, .Motorcycle)
-    w.vehicles[1].speed = 0
-    update_driver_mode(&w, 1); testing.expect(t, w.vehicles[1].driver.mode == .Stopped_Signal)
-}
-
-@(test)
 test_factory_used_by_both_spawn_paths :: proc(t: ^testing.T) {
     for scheduled in ([]bool{false, true}) {
         w: World
