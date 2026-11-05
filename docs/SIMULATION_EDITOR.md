@@ -16,7 +16,7 @@ Commands:
 - `save [PATH]`, `load [PATH]`: save/load the full native case, including selection and assertion settings. Default path is `build/debug-case.cbor`; paths may contain spaces.
 - `check [SECONDS [MIN_METRES]]`, `help`, `quit`: check a clone against progress/safety assertions. Check defaults to 20s and 0.5m, or the loaded case settings. A failed check makes the session exit 1; invalid input makes it exit 2. Commands can continue after an error, but the final exit status retains failures.
 
-The JSON output is for observation; versioned CBOR snapshots retain bit-exact numeric state. `make record-case` / `make replay-case` below are convenient single-shot commands. A frozen case can also be loaded directly with `load test-cases/default-250-driver98.cbor`.
+Inspect and list include the actor state path, intent, no-progress timer, retry deadline, attempts, state-entry time, and execution and maneuver feedback (including blocker and reason); mode remains the legacy projection. The JSON output is for observation; version 2 CBOR snapshots retain bit-exact numeric state, including actor fields. Historical version 1 scenes initialize actors from their preserved physical state on load. `make record-case` / `make replay-case` below are convenient single-shot commands. A frozen case can also be loaded directly with `load test-cases/default-250-driver98.cbor`.
 
 ## Find the first persistent stalls
 

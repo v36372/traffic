@@ -78,6 +78,9 @@ inspect :: proc(w: ^sim.World, selected: u64) {
         accel := sim.following_acceleration(w, v, i, v.driver.traits.headway, v.driver.traits.acceleration)
         fmt.printf("driver=%d kind=%v mode=%v road=%d exit=%d speed=%.6f pose=(%.6f,%.6f) heading=(%.6f,%.6f) path=%.6f/%.6f following_accel=%.6f\n",
             v.id, v.kind, v.driver.mode, v.road, exit, v.speed, p.x,p.y,f.x,f.y,v.motion.progress,v.motion.length,accel)
+        a := v.driver.actor
+        fmt.printf("  state=%s intent=%v no_progress_seconds=%.6f retry_after=%.6f attempts=%d state_since=%.6f\n", sim.driver_state_path(a.state), a.intent, v.driver.waited, v.driver.replan_after, a.attempts, a.since)
+        fmt.printf("  execution=%v maneuver=%v\n", a.last, a.plan)
         for other in w.vehicles {
             if other.id == selected { continue }
             q, g := sim.vehicle_pose(w, other)

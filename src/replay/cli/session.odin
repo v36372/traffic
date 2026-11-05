@@ -23,6 +23,13 @@ Driver_View :: struct {
     id: u64,
     kind: sim.Vehicle_Kind,
     mode: sim.Driver_Mode,
+    state_path: string,
+    intent: sim.Driver_Intent,
+    no_progress_seconds: f32,
+    retry_after: f64,
+    last_execution_feedback, last_maneuver_feedback: sim.Driver_Feedback,
+    attempts: u64,
+    state_since: f64,
     road, exit: int,
     speed: f32,
     position, forward: sim.Vec2,
@@ -65,6 +72,11 @@ find_driver :: proc(s: ^Session, id: u64) -> (sim.Vehicle, int, bool) {
 driver_view :: proc(s: ^Session, v: sim.Vehicle, index: int) -> Driver_View {
     w := &s.world
     view := Driver_View{id = v.id, kind = v.kind, mode = v.driver.mode, road = v.road, speed = v.speed}
+    view.state_path = sim.driver_state_path(v.driver.actor.state)
+    view.intent = v.driver.actor.intent
+    view.no_progress_seconds, view.retry_after = v.driver.waited, v.driver.replan_after
+    view.last_execution_feedback, view.last_maneuver_feedback = v.driver.actor.last, v.driver.actor.plan
+    view.attempts, view.state_since = v.driver.actor.attempts, v.driver.actor.since
     view.position, view.forward = sim.vehicle_pose(w, v)
     view.exit = sim.successor(w, v)
     if v.motion.active { view.exit = v.motion.exit }

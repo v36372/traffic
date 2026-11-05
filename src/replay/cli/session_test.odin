@@ -22,6 +22,20 @@ test_cli_session_controls_one_owned_world_without_a_display :: proc(t: ^testing.
     testing.expect(t, code == 0 && s.world.time == f64(f32(0.05))*2 && s.world.vehicles[0].distance > 20)
     _, code = session_command(&s, "inspect")
     testing.expect(t, code == 0)
+    actor := &s.world.vehicles[0].driver.actor
+    actor.state, actor.intent, actor.since, actor.attempts = .Retry, .Recover, 0.05, 3
+    actor.last = {reason = .Body, blocker = 19}
+    actor.plan = {attempted = true, reason = .Search_Limit}
+    s.world.vehicles[0].driver.waited, s.world.vehicles[0].driver.replan_after = 0.4, 0.8
+    view := driver_view(&s, s.world.vehicles[0], 0)
+    encoded, encoded_ok := encode_reply(&s, "inspect", true, struct { driver: Driver_View }{view})
+    testing.expect(t, encoded_ok)
+    defer delete(encoded)
+    parsed: struct { details: struct { driver: struct { state_path, intent: string, no_progress_seconds: f32, retry_after: f64, attempts: u64, state_since: f64, last_execution_feedback: struct { reason: string, blocker: u64 }, last_maneuver_feedback: struct { reason: string } } } }
+    testing.expect(t, json.unmarshal(transmute([]byte)encoded, &parsed) == nil)
+    defer delete(parsed.details.driver.state_path); defer delete(parsed.details.driver.intent)
+    defer delete(parsed.details.driver.last_execution_feedback.reason); defer delete(parsed.details.driver.last_maneuver_feedback.reason)
+    testing.expect(t, parsed.details.driver.state_path == "Driving.Recovery.RetryWait" && parsed.details.driver.intent == "Recover" && parsed.details.driver.last_execution_feedback.reason == "Body" && parsed.details.driver.last_execution_feedback.blocker == 19 && parsed.details.driver.last_maneuver_feedback.reason == "Search_Limit" && parsed.details.driver.attempts == 3 && parsed.details.driver.no_progress_seconds > 0 && parsed.details.driver.retry_after > 0 && parsed.details.driver.state_since > 0)
     time := s.world.time
     original := s.world.vehicles[0]
     _, code = session_command(&s, "check 0.1 0.01")

@@ -1,6 +1,8 @@
 package replay
 
 import "core:fmt"
+import "core:encoding/cbor"
+import virtual "core:mem/virtual"
 import "core:os"
 import "core:testing"
 import sim "../sim"
@@ -29,6 +31,10 @@ test_snapshot_roundtrip_replays_exact_native_state :: proc(t: ^testing.T) {
     path := fmt.aprintf("%s/case.cbor", dir)
     defer delete(path)
     defer os.remove(path)
+    if len(w.vehicles) > 1 { w.vehicles[1].driver.actor = {state = .Plan, intent = .Recover, attempts = 9} }
+    w.vehicles[0].driver.actor = {initialized = true, state = .Retry, intent = .Recover, since = 3.25, attempts = 7, junction_wait = 0.4, junction_yielded = true, filtering = true, last = {moved = 0.125, reason = .Body, blocker = 42}, plan = {attempted = true, reason = .Search_Limit, blocker = 43}}
+    w.vehicles[0].driver.waited = 0.75
+    w.vehicles[0].driver.replan_after = w.time+0.5
     testing.expect(t, save(&w, path, w.vehicles[0].id, 7, 0.75))
     selected, duration, progress, ok := load_case(&restored, path)
     testing.expect(t, ok && selected == w.vehicles[0].id && duration == 7 && progress == 0.75)
@@ -50,11 +56,44 @@ test_snapshot_roundtrip_replays_exact_native_state :: proc(t: ^testing.T) {
     }
     testing.expect(t, save(&w, path, selected), "atomic replacement of an existing saved case must work")
     before := restored.vehicles[0]
+    invalid_state := capture(&w, selected, 7, 0.75)
+    defer delete(invalid_state.runtimes)
+    invalid_state.vehicles[0].driver.actor.state = sim.Driver_State(999)
+    testing.expect(t, !restore(&restored, invalid_state) && restored.vehicles[0] == before, "invalid actor must not replace live world")
     for invalid in ([]string{"", "{", "corrupt case"}) {
         testing.expect(t, os.write_entire_file(path, invalid) == nil)
         _, loaded := load(&restored, path)
         testing.expect(t, !loaded && restored.vehicles[0] == before, "bad snapshots must leave the live scene intact")
     }
+}
+
+@(test)
+test_historical_scene_import_preserves_physics_and_counters :: proc(t: ^testing.T) {
+    data, err := os.read_entire_file("test-cases/default-250-driver98.cbor", context.allocator)
+    testing.expect(t, err == nil)
+    if err != nil { return }
+    defer delete(data)
+    arena: virtual.Arena
+    assert(virtual.arena_init_growing(&arena) == nil)
+    defer virtual.arena_destroy(&arena)
+    old: Snapshot
+    testing.expect(t, cbor.unmarshal(data, &old, allocator = virtual.arena_allocator(&arena)) == nil && old.version == 1)
+    w: sim.World
+    defer sim.destroy(&w)
+    testing.expect(t, restore(&w, old))
+    if len(w.vehicles) != len(old.vehicles) { testing.expect(t, false); return }
+    testing.expect(t, w.time == old.time && w.rng == old.rng && w.behavior_seed == old.behavior_seed && w.entry_sequence == old.entry_sequence && w.spawned == old.spawned && w.completed == old.completed && w.requested == old.requested && w.pending == old.pending && w.spawn_accumulator == old.spawn_accumulator)
+    for v, i in w.vehicles {
+        original := old.vehicles[i]
+        testing.expect(t, v.driver.actor.initialized && v.driver.waited == 0 && v.driver.replan_after == original.driver.replan_after && v.driver.actor.last.reason == .None)
+        projected := v.driver
+        sim.publish_driver_mode(&projected)
+        testing.expect(t, v.driver.mode == projected.mode, "legacy projection must reflect the reset no-progress timer")
+        actual := v
+        actual.driver = original.driver
+        testing.expect(t, actual == original, "historical physical vehicle fields must not change")
+    }
+    for r, i in w.spawn_runtime { testing.expect(t, r.elapsed == old.runtimes[i].elapsed && r.pending == old.runtimes[i].pending && r.admitted == old.runtimes[i].admitted) }
 }
 
 @(test)

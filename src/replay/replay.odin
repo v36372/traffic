@@ -35,7 +35,7 @@ Report :: struct {
 }
 
 capture :: proc(w: ^sim.World, selected: u64, duration: f64, min_progress: f32) -> Snapshot {
-    s := Snapshot{version = 1, selected = selected, duration = duration, min_progress = min_progress,
+    s := Snapshot{version = 2, selected = selected, duration = duration, min_progress = min_progress,
         nodes = w.nodes[:], roads = w.roads[:], vehicles = w.vehicles[:], signals = w.signals[:], spawns = w.spawns[:],
         behavior = w.behavior, issues = w.motion_issues[:], time = w.time, rng = w.rng, behavior_seed = w.behavior_seed,
         entry_sequence = w.entry_sequence, spawned = w.spawned, completed = w.completed, requested = w.requested,
@@ -46,8 +46,13 @@ capture :: proc(w: ^sim.World, selected: u64, duration: f64, min_progress: f32) 
 
 finite :: proc(x: $T) -> bool { return !math.is_nan(x) && !math.is_inf(x) }
 
+valid_feedback :: proc(f: sim.Driver_Feedback) -> bool {
+    return int(f.reason) >= 0 && int(f.reason) <= int(sim.Driver_Block_Reason.Partial_End) &&
+        int(f.problem) >= 0 && int(f.problem) <= int(sim.Motion_Problem.Terminal_Clearance) && finite(f.moved) && f.moved >= 0
+}
+
 valid :: proc(s: Snapshot) -> bool {
-    if s.version != 1 || !finite(s.time) || s.time < 0 || !finite(s.duration) || s.duration <= 0 || s.duration > 300 ||
+    if (s.version != 1 && s.version != 2) || !finite(s.time) || s.time < 0 || !finite(s.duration) || s.duration <= 0 || s.duration > 300 ||
         !finite(s.min_progress) || s.min_progress <= 0 || s.min_progress > 100 || !finite(s.spawn_accumulator) ||
         len(s.nodes) == 0 || len(s.roads) == 0 || len(s.vehicles) > 120 || len(s.runtimes) != len(s.spawns) ||
         s.spawned != s.completed+len(s.vehicles) || s.completed < 0 || s.pending < 0 || s.requested < 0 { return false }
@@ -61,8 +66,18 @@ valid :: proc(s: Snapshot) -> bool {
     for v, i in s.vehicles {
         if v.road < 0 || v.road >= len(s.roads) || v.id == 0 || int(v.kind) < 0 || int(v.kind) > 5 ||
             !finite(v.distance) || v.distance < 0 || !finite(v.lateral) || !finite(v.preferred_lateral) || !finite(v.speed) || v.speed < 0 ||
-            !finite(v.driver.replan_after) || !finite(v.driver.waited) ||
+            !finite(v.driver.replan_after) || v.driver.replan_after < 0 || !finite(v.driver.waited) || v.driver.waited < 0 ||
             !finite(v.driver.traits.speed_factor) || !finite(v.driver.traits.headway) || !finite(v.driver.traits.acceleration) { return false }
+        if s.version == 2 {
+            if int(v.driver.mode) < 0 || int(v.driver.mode) > int(sim.Driver_Mode.Avoiding) ||
+                int(v.driver.persona) < 0 || int(v.driver.persona) > int(sim.Driver_Persona.Assertive) ||
+                int(v.driver.kind) < 0 || int(v.driver.kind) > int(sim.Vehicle_Kind.Tricycle) { return false }
+            a := v.driver.actor
+            if int(a.state) < 0 || int(a.state) > int(sim.Driver_State.Completed) ||
+                int(a.intent) < 0 || int(a.intent) > int(sim.Driver_Intent.Recover) ||
+                !finite(a.since) || a.since < 0 || !finite(a.junction_wait) || a.junction_wait < 0 ||
+                !valid_feedback(a.last) || !valid_feedback(a.plan) { return false }
+        }
         if len(s.spawns) > 0 && (v.spawn_index < 0 || v.spawn_index >= len(s.spawns)) { return false }
         for other in s.vehicles[:i] { if other.id == v.id { return false } }
         if v.lane.active && (!finite(v.lane.start) || !finite(v.lane.from) || !finite(v.lane.to) || !finite(v.lane.length) || v.lane.length <= 0) { return false }
@@ -119,6 +134,18 @@ restore :: proc(w: ^sim.World, s: Snapshot) -> bool {
     next.time, next.rng, next.entry_sequence = s.time, s.rng, s.entry_sequence
     next.spawned, next.completed, next.requested, next.pending = s.spawned, s.completed, s.requested, s.pending
     next.spawn_accumulator = s.spawn_accumulator
+    if s.version == 1 {
+        for &v, i in next.vehicles {
+            v.driver.actor = {}
+            headway, preferred := f32(0.8), f32(2)
+            if next.behavior.enabled { headway, preferred = v.driver.traits.headway, v.driver.traits.acceleration }
+            following: sim.Following_Observation
+            _ = sim.following_acceleration(&next, v, i, headway, preferred, &following)
+            sim.initialize_driver_actor(&v.driver, sim.observe_driver(&next, i, following), next.time)
+            v.driver.waited = 0
+            sim.publish_driver_mode(&v.driver)
+        }
+    }
     sim.destroy(w)
     w^ = next
     return true
